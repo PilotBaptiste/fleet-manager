@@ -927,6 +927,7 @@ function ImportCSV({ data, db }) {
   const [agg, setAgg] = useState(null);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
+  const [importYear, setImportYear] = useState(new Date().getFullYear());
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
@@ -934,12 +935,14 @@ function ImportCSV({ data, db }) {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target.result;
-      const p = parseFlightCSV(text);
+      const p = parseFlightCSV(text, importYear);
       setParsed(p);
       if (!p.error && p.flights.length > 0) {
         const a = aggregateFlights(p.flights, data.aircraft);
         setAgg(a);
         setStep("preview");
+      } else if (!p.error && p.flights.length === 0) {
+        setParsed({ ...p, error: `Aucun vol trouvé pour l'année ${importYear}. Vérifiez le fichier ou changez l'année.` });
       }
     };
     reader.readAsText(file, "UTF-8");
@@ -981,10 +984,17 @@ function ImportCSV({ data, db }) {
         <div className="card-h"><h2>Import CSV Aerogest</h2></div>
         <div className="card-b">
           <p style={{fontSize:13,color:"var(--text2)",marginBottom:16,lineHeight:1.8}}>
-            Importez l&apos;export CSV d&apos;Aerogest avec les vols depuis janvier 2022.<br/>
-            Colonnes attendues : Date, Immatriculation, Durée en min, Mode (DC/CDB), etc.<br/>
-            Les données seront agrégées par avion et par mois automatiquement.
+            Importez un fichier CSV par année. Seuls les vols de l&apos;année sélectionnée seront importés.<br/>
+            Colonnes attendues : Date, Aéronef, Durée, Mode (DC/CDB), etc.
           </p>
+          <div className="fg" style={{marginBottom:20}}>
+            <div className="fi">
+              <label>Année à importer</label>
+              <select value={importYear} onChange={e => setImportYear(Number(e.target.value))}>
+                {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+          </div>
           <div style={{border:"2px dashed var(--border)",borderRadius:12,padding:40,textAlign:"center",background:"var(--bg)"}}>
             <input type="file" accept=".csv,.txt" onChange={handleFile} style={{fontSize:14,fontFamily:"inherit"}}/>
           </div>
@@ -998,7 +1008,7 @@ function ImportCSV({ data, db }) {
       <div>
         {/* Stats */}
         <div className="sg">
-          <div className="sc"><div className="sc-l">VOLS IMPORTÉS</div><div className="sc-v b">{agg.stats.totalFlights}</div></div>
+          <div className="sc"><div className="sc-l">VOLS {importYear}</div><div className="sc-v b">{agg.stats.totalFlights}</div></div>
           <div className="sc"><div className="sc-l">HEURES TOTALES</div><div className="sc-v">{fH(agg.stats.totalHours)}</div><div className="sc-s">CdB {fH(agg.stats.hoursCdb)} · DC {fH(agg.stats.hoursDc)}</div></div>
           <div className="sc"><div className="sc-l">MOUVEMENTS</div><div className="sc-v">{agg.stats.totalRotations}</div></div>
           {agg.stats.totalMontant > 0 && <div className="sc"><div className="sc-l">MONTANT TOTAL</div><div className="sc-v b">{fmt(agg.stats.totalMontant)}</div></div>}
