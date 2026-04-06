@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
 import { useFleetData } from "../lib/useFleetData";
-import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, revenuePerHour, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
+import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, revenuePerHour, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, isBlockBlock, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
 import { parseFlightCSV, aggregateFlights } from "../lib/csvImport";
 
 export default function FleetApp({ onLogout }) {
@@ -54,7 +54,7 @@ export default function FleetApp({ onLogout }) {
       {tab === "loans" && <LoansTab data={data} db={db} modal={modal} setModal={setModal} />}
       {tab === "sim" && <Simulation data={data} year={year} />}
       {tab === "import" && <ImportCSV data={data} db={db} />}
-      {tab === "fleet" && <Fleet data={data} db={db} modal={modal} setModal={setModal} />}
+      {tab === "fleet" && <Fleet data={data} db={db} modal={modal} setModal={setModal} year={year} />}
     </div>
   );
 }
@@ -332,9 +332,14 @@ function Rates({ data, db, modal, setModal }) {
   const [acId, setAcId] = useState(data.aircraft[0]?.id || null);
   const today = new Date();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
-  const [form, setForm] = useState({ field:"", value:"", fromDate:todayStr, global:false });
+  const [form, setForm] = useState({ field:"", value:"", fromDate:todayStr, global:false, isBool:false });
 
-  const openAdd = (fieldKey, isGlobal) => { setForm({field:fieldKey,value:"",fromDate:todayStr,global:isGlobal}); setModal("rate"); };
+  const allFieldDefs = [...RATE_GROUPS.flatMap(g => g.fields), ...GLOBAL_RATE_FIELDS];
+  const openAdd = (fieldKey, isGlobal) => {
+    const def = allFieldDefs.find(f => f.key === fieldKey);
+    setForm({field:fieldKey, value:def?.isBool ? "0" : "", fromDate:todayStr, global:isGlobal, isBool:!!def?.isBool});
+    setModal("rate");
+  };
   const save = async () => {
     if (!form.field) return;
     const [fy,fm,fd] = form.fromDate.split("-").map(Number);
@@ -437,7 +442,7 @@ function Rates({ data, db, modal, setModal }) {
               {periods.length === 0 && <div style={{fontSize:13,color:"var(--text3)",padding:"8px 0"}}>Aucune valeur définie</div>}
               {periods.map(p => (<div className="rate-period" key={p.id}>
                 <div className="rp-date">À partir du {String(p.fromDay||1).padStart(2,"0")}/{String((p.fromMonth||0)+1).padStart(2,"0")}/{p.fromYear}</div>
-                <div className="rp-val">{fmt2(p.value)}</div>
+                <div className="rp-val">{field.isBool ? (p.value >= 1 ? <span className="tag tag-o">Block-Block</span> : <span className="tag tag-g">Roulage</span>) : fmt2(p.value)}</div>
                 <div style={{flex:1}}/>
                 <button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteRate(p.id)}>✕</button>
               </div>))}
@@ -452,7 +457,11 @@ function Rates({ data, db, modal, setModal }) {
       <div className="mod-h"><h3>Nouvelle période {form.global?"(club)":""}</h3><button className="btn btn-s btn-ghost" onClick={() => setModal(null)}>✕</button></div>
       <div className="mod-b"><div className="fg">
         <div className="fi"><label>Date d&apos;effet</label><input type="date" value={form.fromDate} onChange={e => setForm(f => ({...f,fromDate:e.target.value}))}/></div>
-        <div className="fi"><label>Valeur</label><input type="number" step="0.01" value={form.value} placeholder="0" onChange={e => setForm(f => ({...f,value:e.target.value}))}/></div>
+        {form.isBool ? (
+          <div className="fi"><label>Mode</label><select value={form.value} onChange={e => setForm(f => ({...f,value:e.target.value}))}><option value="0">Forfait roulage</option><option value="1">Block-Block</option></select></div>
+        ) : (
+          <div className="fi"><label>Valeur</label><input type="number" step="0.01" value={form.value} placeholder="0" onChange={e => setForm(f => ({...f,value:e.target.value}))}/></div>
+        )}
       </div></div>
       <div className="mod-f"><button className="btn" onClick={() => setModal(null)}>Annuler</button><button className="btn btn-p" onClick={save}>Enregistrer</button></div>
     </div></div>)}
@@ -589,7 +598,7 @@ function Simulation({ data, year }) {
   };
 
   const GlobalMode = () => {
-    const items = data.aircraft.map(ac => {
+    const items = data.aircraft.filter(ac => isAircraftActiveYear(ac, year, ALL12)).map(ac => {
       const cur = aggAC(data, ac.id, year, ALL12);
       const ov = globOv[ac.id] || {};
       const proj = Object.keys(ov).length > 0 ? aggACWithOverrides(data, ac.id, year, ALL12, ov) : cur;
@@ -806,12 +815,13 @@ function Simulation({ data, year }) {
       </div>
       <div className="tw"><table>
         <thead><tr><th>Avion</th><th>Tarif actuel</th><th>Tarif simulé</th><th>Roulage</th><th>Roulage sim.</th><th>Roulage (€/vol)</th><th>Seuil (h)</th><th>H. actuelles</th><th>Excédent</th><th>Statut</th></tr></thead>
-        <tbody>{data.aircraft.map(ac => {
+        <tbody>{data.aircraft.filter(ac => isAircraftActiveYear(ac, year, ALL12)).map(ac => {
           const cur = aggAC(data, ac.id, year, ALL12);
           const curTarif = getRate(data.rates, ac.id, "tarifHeure", year, lm);
-          const curForfaitMin = getRate(data.rates, ac.id, "forfaitRoulage", year, lm);
+          const bb = isBlockBlock(data, ac.id, year, lm);
+          const curForfaitMin = bb ? 0 : getGlobalRate(data.rates, "forfaitRoulage", year, lm);
           const simTarif = beOverrides[ac.id]?.tarif !== undefined ? beOverrides[ac.id].tarif : curTarif;
-          const simForfaitMin = beOverrides[ac.id]?.forfait !== undefined ? beOverrides[ac.id].forfait : curForfaitMin;
+          const simForfaitMin = bb ? 0 : (beOverrides[ac.id]?.forfait !== undefined ? beOverrides[ac.id].forfait : curForfaitMin);
           const simForfaitEur = (simForfaitMin / 60) * simTarif;
           const be = breakEvenHours(data, ac.id, year, ALL12, simTarif, simForfaitMin);
           const beOk = be !== Infinity;
@@ -1143,35 +1153,37 @@ function ImportCSV({ data, db }) {
 }
 
 // ════════ FLEET ════════
-function Fleet({ data, db, modal, setModal }) {
-  const defaultForm = { immat:"", type:"", carbuType:"100LL", huileType:"W100", blockBlock:false, activeFrom:"", activeTo:"" };
+function Fleet({ data, db, modal, setModal, year }) {
+  const defaultForm = { immat:"", type:"", carbuType:"100LL", huileType:"W100", activeFrom:"", activeTo:"" };
   const [form, setForm] = useState(defaultForm);
   const [editId, setEditId] = useState(null);
   const openAdd = () => { setForm(defaultForm); setEditId(null); setModal("ac"); };
-  const openEdit = ac => { setForm({ immat:ac.immat, type:ac.type, carbuType:ac.carbuType||"100LL", huileType:ac.huileType||"W100", blockBlock:!!ac.blockBlock, activeFrom:ac.activeFrom||"", activeTo:ac.activeTo||"" }); setEditId(ac.id); setModal("ac"); };
+  const openEdit = ac => { setForm({ immat:ac.immat, type:ac.type, carbuType:ac.carbuType||"100LL", huileType:ac.huileType||"W100", activeFrom:ac.activeFrom||"", activeTo:ac.activeTo||"" }); setEditId(ac.id); setModal("ac"); };
   const save = async () => {
     if (!form.immat) return;
     if (editId) await db.updateAircraft(editId, form);
-    else await db.addAircraft(form.immat, form.type, { carbuType:form.carbuType, huileType:form.huileType, blockBlock:form.blockBlock, activeFrom:form.activeFrom||null, activeTo:form.activeTo||null });
+    else await db.addAircraft(form.immat, form.type, { carbuType:form.carbuType, huileType:form.huileType, activeFrom:form.activeFrom||null, activeTo:form.activeTo||null });
     setModal(null);
   };
 
   const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("fr-FR") : "";
+  const lm = Math.min(11, new Date().getMonth());
 
   return (<div>
     <div className="card">
       <div className="card-h"><h2>Flotte</h2><button className="btn btn-p" onClick={openAdd}>+ Ajouter un avion</button></div>
       {!data.aircraft.length ? <div className="empty">Aucun avion configuré.</div> : (
         <div className="tw"><table>
-          <thead><tr><th>Immatriculation</th><th>Type</th><th>Carburant</th><th>Huile</th><th>Roulage</th><th>Actif</th><th></th></tr></thead>
+          <thead><tr><th>Immatriculation</th><th>Type</th><th>Carburant</th><th>Huile</th><th>Facturation</th><th>Actif</th><th></th></tr></thead>
           <tbody>{data.aircraft.map(ac => {
-            const isActive = !ac.activeTo;
-            return (<tr key={ac.id} style={!isActive?{opacity:.5}:{}}>
+            const active = !ac.activeTo;
+            const bb = isBlockBlock(data, ac.id, year, lm);
+            return (<tr key={ac.id} style={!active?{opacity:.5}:{}}>
               <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
               <td className="tx">{ac.type}</td>
               <td className="tx">{ac.carbuType || "100LL"}</td>
               <td className="tx">{ac.huileType || "W100"}</td>
-              <td>{ac.blockBlock ? <span className="tag tag-o">Block-Block</span> : <span className="tag tag-g">Roulage</span>}</td>
+              <td>{bb ? <span className="tag tag-o">Block-Block</span> : <span className="tag tag-g">Roulage</span>}</td>
               <td>{ac.activeFrom || ac.activeTo ? <span style={{fontSize:12,color:"var(--text3)"}}>{fmtDate(ac.activeFrom)||"…"} → {fmtDate(ac.activeTo)||"Actif"}</span> : <span className="tag tag-g">Actif</span>}</td>
               <td style={{display:"flex",gap:6}}>
                 <button className="btn btn-s" onClick={() => openEdit(ac)}>Modifier</button>
@@ -1193,16 +1205,11 @@ function Fleet({ data, db, modal, setModal }) {
           <div className="fi"><label>Type carburant</label><input value={form.carbuType} onChange={e=>setForm(f=>({...f,carbuType:e.target.value}))} placeholder="100LL"/></div>
           <div className="fi"><label>Type huile</label><input value={form.huileType} onChange={e=>setForm(f=>({...f,huileType:e.target.value}))} placeholder="W100"/></div>
         </div>
-        <div style={{marginTop:16,display:"flex",alignItems:"center",gap:10}}>
-          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
-            <input type="checkbox" checked={form.blockBlock} onChange={e=>setForm(f=>({...f,blockBlock:e.target.checked}))} style={{width:18,height:18,accentColor:"var(--accent)"}}/>
-            Block-Block <span style={{fontSize:11,color:"var(--text3)"}}>(pas de forfait roulage)</span>
-          </label>
-        </div>
         <div className="fg" style={{marginTop:16}}>
           <div className="fi"><label>Actif depuis</label><input type="date" value={form.activeFrom} onChange={e=>setForm(f=>({...f,activeFrom:e.target.value}))}/><span style={{fontSize:11,color:"var(--text3)"}}>Vide = toujours</span></div>
           <div className="fi"><label>Actif jusqu&apos;au</label><input type="date" value={form.activeTo} onChange={e=>setForm(f=>({...f,activeTo:e.target.value}))}/><span style={{fontSize:11,color:"var(--text3)"}}>Vide = encore actif</span></div>
         </div>
+        <p style={{fontSize:12,color:"var(--text3)",marginTop:12}}>Le mode de facturation (Block-Block / Roulage) se configure dans l&apos;onglet <strong>Tarifs</strong> par avion, avec une date d&apos;effet.</p>
       </div>
       <div className="mod-f"><button className="btn" onClick={()=>setModal(null)}>Annuler</button><button className="btn btn-p" onClick={save}>Enregistrer</button></div>
     </div></div>)}
