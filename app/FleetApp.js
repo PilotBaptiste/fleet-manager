@@ -161,7 +161,7 @@ function Dashboard({ data, year }) {
       <div className="card">
         <div className="card-h"><h2>Rentabilité par avion <span className="badge">{view==="annuel"?year:QL[q]+" "+year}</span></h2></div>
         <div className="tw"><table>
-          <thead><tr><th>Avion</th><th>Type</th><th>H. CdB</th><th>H. DC</th><th>Total h</th><th>Vols</th><th>Rev. CdB</th><th>Rev. DC</th><th>Roulage</th><th>Dépenses</th><th>Résultat</th><th>Coût/h</th><th>Verdict</th></tr></thead>
+          <thead><tr><th>Avion</th><th>Type</th><th>H. CdB</th><th>H. DC</th><th>Total h</th><th>Vols</th><th>Rev. CdB</th><th>Rev. DC</th><th>Revenu total</th><th>dont Roulage</th><th>Dépenses</th><th>Résultat</th><th>Coût/h</th><th>Verdict</th></tr></thead>
           <tbody>{acData.map(({ac, f, fPrev}) => {
             const ok = f.resultat >= 0;
             const dRes = dFmt(f.resultat, fPrev.resultat);
@@ -174,9 +174,10 @@ function Dashboard({ data, year }) {
                 <td className="num" style={{color:"var(--orange)"}}>{fH(f.hDc)}</td>
                 <td className="num" style={{fontWeight:600}}>{fH(f.heures)}</td>
                 <td className="num">{f.rotations}</td>
-                <td className="num" style={{color:"var(--accent)"}}>{fmt(f.revenuVolCdb+f.revenuRoulageCdb)}</td>
-                <td className="num" style={{color:"var(--orange)"}}>{fmt(f.revenuVolDc+f.revenuRoulageDc)}</td>
-                <td className="num" style={{color:"var(--purple)"}}>{fmt(f.revenuRoulage)}</td>
+                <td className="num" style={{color:"var(--accent)"}}>{fmt(f.revenuVolCdb)}</td>
+                <td className="num" style={{color:"var(--orange)"}}>{fmt(f.revenuVolDc)}</td>
+                <td className="num" style={{fontWeight:700}}>{fmt(f.revenu)}</td>
+                <td className="num" style={{color:"var(--purple)",fontSize:12}}>{fmt(f.revenuRoulage)}</td>
                 <td className="num">{fmt(f.depenses)}</td>
                 <td className={ok?"pos":"neg"}>{ok?"+":""}{fmt(f.resultat)}</td>
                 <td className="num">{f.heures>0?fmt2(f.coutH):"—"}</td>
@@ -770,9 +771,9 @@ function Simulation({ data, year }) {
           <thead><tr><th>Poste</th><th>Actuel</th><th>Projeté</th><th>Delta</th></tr></thead>
           <tbody>
             {[
-              {l:"Rev. CdB (vol + roulage)",a:cur.revenuVolCdb+cur.revenuRoulageCdb,p:proj.revenuVolCdb+proj.revenuRoulageCdb},
-              {l:"Rev. DC (vol + roulage)",a:cur.revenuVolDc+cur.revenuRoulageDc,p:proj.revenuVolDc+proj.revenuRoulageDc},
-              {l:"dont Roulage total",a:cur.revenuRoulage,p:proj.revenuRoulage},
+              {l:"Rev. CdB",a:cur.revenuVolCdb,p:proj.revenuVolCdb},
+              {l:"Rev. DC",a:cur.revenuVolDc,p:proj.revenuVolDc},
+              {l:"dont Roulage (indicateur)",a:cur.revenuRoulage,p:proj.revenuRoulage},
               {l:"Revenus total",a:cur.revenu,p:proj.revenu},
               {l:"Coûts fixes",a:cur.fixe,p:proj.fixe},
               {l:"Coûts variables",a:cur.variable,p:proj.variable},{l:"Prêts",a:cur.loan,p:proj.loan},
