@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
 import { useFleetData } from "../lib/useFleetData";
-import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, revenuePerHour, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis } from "../lib/calc";
+import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, revenuePerHour, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
 import { parseFlightCSV, aggregateFlights } from "../lib/csvImport";
 
 export default function FleetApp({ onLogout }) {
@@ -70,8 +70,9 @@ function Dashboard({ data, year }) {
 
   if (!data.aircraft.length) return <div className="card"><div className="empty">Commencez par ajouter vos avions dans l&apos;onglet <strong>Flotte</strong>.</div></div>;
 
-  // Per-aircraft data sorted by profitability
-  const acData = data.aircraft.map(ac => ({ ac, f: aggAC(data, ac.id, year, range), fPrev: aggAC(data, ac.id, year - 1, range) })).sort((a,b) => b.f.resultat - a.f.resultat);
+  // Per-aircraft data sorted by profitability (only active aircraft for this year)
+  const activeAc = data.aircraft.filter(ac => isAircraftActiveYear(ac, year, range));
+  const acData = activeAc.map(ac => ({ ac, f: aggAC(data, ac.id, year, range), fPrev: aggAC(data, ac.id, year - 1, range) })).sort((a,b) => b.f.resultat - a.f.resultat);
   const best = acData[0];
   const worst = acData[acData.length - 1];
   const maxAbs = Math.max(1, ...acData.map(x => Math.abs(x.f.resultat)));
@@ -247,7 +248,7 @@ function Dashboard({ data, year }) {
 }
 
 function BarChart({ data, year }) {
-  const res = MOS.map((_,i) => { let r=0; data.aircraft.forEach(ac => { r += calcMonth(data,ac.id,year,i).resultat; }); return r; });
+  const res = MOS.map((_,i) => { let r=0; data.aircraft.filter(ac => isAircraftActive(ac, year, i)).forEach(ac => { r += calcMonth(data,ac.id,year,i).resultat; }); return r; });
   const mx = Math.max(1,...res.map(Math.abs));
   return (<div className="bc">{MOS.map((m,i) => {
     const v = res[i]; const h = Math.max(4,(Math.abs(v)/mx)*140);
@@ -366,6 +367,54 @@ function Rates({ data, db, modal, setModal }) {
             </div>))}
           </div>);
         })}
+
+        {/* ── Prix carburant par type ── */}
+        <div style={{borderTop:"1px solid var(--border)",paddingTop:16,marginTop:8}}>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Prix carburant par type</div>
+          {getFuelTypes(data.aircraft).map(fType => {
+            const rateKey = `prixCarbu_${fType}`;
+            const periods = data.rates.filter(r => r.field===rateKey).sort((a,b) => (a.fromYear*400+a.fromMonth*32+(a.fromDay||1)) - (b.fromYear*400+b.fromMonth*32+(b.fromDay||1)));
+            const acList = data.aircraft.filter(a => a.carbuType === fType).map(a => a.immat).join(", ");
+            return (<div key={fType} style={{marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <div><span style={{fontSize:13,fontWeight:600}}>{fType} (€/L)</span><span style={{fontSize:11,color:"var(--text3)",marginLeft:8}}>{acList}</span></div>
+                <button className="btn btn-s btn-p" onClick={() => openAdd(rateKey, true)}>+ Période</button>
+              </div>
+              {periods.length === 0 && <div style={{fontSize:13,color:"var(--text3)",padding:"8px 0"}}>Aucun prix défini</div>}
+              {periods.map(p => (<div className="rate-period" key={p.id}>
+                <div className="rp-date">À partir du {String(p.fromDay||1).padStart(2,"0")}/{String((p.fromMonth||0)+1).padStart(2,"0")}/{p.fromYear}</div>
+                <div className="rp-val">{fmt2(p.value)}/L</div>
+                <div style={{flex:1}}/>
+                <button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteRate(p.id)}>✕</button>
+              </div>))}
+            </div>);
+          })}
+          {getFuelTypes(data.aircraft).length === 0 && <div style={{fontSize:13,color:"var(--text3)"}}>Configurez les types de carburant dans Flotte.</div>}
+        </div>
+
+        {/* ── Prix huile par type ── */}
+        <div style={{borderTop:"1px solid var(--border)",paddingTop:16,marginTop:8}}>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Prix huile par type</div>
+          {getOilTypes(data.aircraft).map(oType => {
+            const rateKey = `prixHuile_${oType}`;
+            const periods = data.rates.filter(r => r.field===rateKey).sort((a,b) => (a.fromYear*400+a.fromMonth*32+(a.fromDay||1)) - (b.fromYear*400+b.fromMonth*32+(b.fromDay||1)));
+            const acList = data.aircraft.filter(a => a.huileType === oType).map(a => a.immat).join(", ");
+            return (<div key={oType} style={{marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <div><span style={{fontSize:13,fontWeight:600}}>{oType} (€/L)</span><span style={{fontSize:11,color:"var(--text3)",marginLeft:8}}>{acList}</span></div>
+                <button className="btn btn-s btn-p" onClick={() => openAdd(rateKey, true)}>+ Période</button>
+              </div>
+              {periods.length === 0 && <div style={{fontSize:13,color:"var(--text3)",padding:"8px 0"}}>Aucun prix défini</div>}
+              {periods.map(p => (<div className="rate-period" key={p.id}>
+                <div className="rp-date">À partir du {String(p.fromDay||1).padStart(2,"0")}/{String((p.fromMonth||0)+1).padStart(2,"0")}/{p.fromYear}</div>
+                <div className="rp-val">{fmt2(p.value)}/L</div>
+                <div style={{flex:1}}/>
+                <button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteRate(p.id)}>✕</button>
+              </div>))}
+            </div>);
+          })}
+          {getOilTypes(data.aircraft).length === 0 && <div style={{fontSize:13,color:"var(--text3)"}}>Configurez les types d&apos;huile dans Flotte.</div>}
+        </div>
       </div>
     </div>
 
@@ -1095,33 +1144,35 @@ function ImportCSV({ data, db }) {
 
 // ════════ FLEET ════════
 function Fleet({ data, db, modal, setModal }) {
-  const [form, setForm] = useState({ immat:"", type:"" });
+  const defaultForm = { immat:"", type:"", carbuType:"100LL", huileType:"W100", blockBlock:false, activeFrom:"", activeTo:"" };
+  const [form, setForm] = useState(defaultForm);
   const [editId, setEditId] = useState(null);
-  const openAdd = () => { setForm({immat:"",type:""}); setEditId(null); setModal("ac"); };
-  const openEdit = ac => { setForm({immat:ac.immat,type:ac.type}); setEditId(ac.id); setModal("ac"); };
+  const openAdd = () => { setForm(defaultForm); setEditId(null); setModal("ac"); };
+  const openEdit = ac => { setForm({ immat:ac.immat, type:ac.type, carbuType:ac.carbuType||"100LL", huileType:ac.huileType||"W100", blockBlock:!!ac.blockBlock, activeFrom:ac.activeFrom||"", activeTo:ac.activeTo||"" }); setEditId(ac.id); setModal("ac"); };
   const save = async () => {
     if (!form.immat) return;
-    if (editId) await db.updateAircraft(editId, form.immat, form.type);
-    else await db.addAircraft(form.immat, form.type);
+    if (editId) await db.updateAircraft(editId, form);
+    else await db.addAircraft(form.immat, form.type, { carbuType:form.carbuType, huileType:form.huileType, blockBlock:form.blockBlock, activeFrom:form.activeFrom||null, activeTo:form.activeTo||null });
     setModal(null);
   };
+
+  const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("fr-FR") : "";
 
   return (<div>
     <div className="card">
       <div className="card-h"><h2>Flotte</h2><button className="btn btn-p" onClick={openAdd}>+ Ajouter un avion</button></div>
       {!data.aircraft.length ? <div className="empty">Aucun avion configuré.</div> : (
         <div className="tw"><table>
-          <thead><tr><th>Immatriculation</th><th>Type</th><th>Tarifs</th><th>Prêts</th><th>Opérations</th><th></th></tr></thead>
+          <thead><tr><th>Immatriculation</th><th>Type</th><th>Carburant</th><th>Huile</th><th>Roulage</th><th>Actif</th><th></th></tr></thead>
           <tbody>{data.aircraft.map(ac => {
-            const nR = data.rates.filter(r=>r.acId===ac.id).length;
-            const nL = (data.loans||[]).filter(l=>l.acId===ac.id).length;
-            const nO = (data.ops||[]).filter(o=>o.acId===ac.id).length;
-            return (<tr key={ac.id}>
+            const isActive = !ac.activeTo;
+            return (<tr key={ac.id} style={!isActive?{opacity:.5}:{}}>
               <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
               <td className="tx">{ac.type}</td>
-              <td>{nR>0?<span className="tag tag-g">{nR}</span>:"—"}</td>
-              <td>{nL>0?<span className="tag tag-p">{nL}</span>:"—"}</td>
-              <td>{nO>0?<span className="tag tag-o">{nO}</span>:"—"}</td>
+              <td className="tx">{ac.carbuType || "100LL"}</td>
+              <td className="tx">{ac.huileType || "W100"}</td>
+              <td>{ac.blockBlock ? <span className="tag tag-o">Block-Block</span> : <span className="tag tag-g">Roulage</span>}</td>
+              <td>{ac.activeFrom || ac.activeTo ? <span style={{fontSize:12,color:"var(--text3)"}}>{fmtDate(ac.activeFrom)||"…"} → {fmtDate(ac.activeTo)||"Actif"}</span> : <span className="tag tag-g">Actif</span>}</td>
               <td style={{display:"flex",gap:6}}>
                 <button className="btn btn-s" onClick={() => openEdit(ac)}>Modifier</button>
                 <button className="btn btn-s btn-d" onClick={() => db.deleteAircraft(ac.id)}>Supprimer</button>
@@ -1131,12 +1182,28 @@ function Fleet({ data, db, modal, setModal }) {
         </table></div>
       )}
     </div>
-    {modal==="ac" && (<div className="mo" onClick={()=>setModal(null)}><div className="mod" onClick={e=>e.stopPropagation()}>
+    {modal==="ac" && (<div className="mo" onClick={()=>setModal(null)}><div className="mod" style={{maxWidth:600}} onClick={e=>e.stopPropagation()}>
       <div className="mod-h"><h3>{editId?"Modifier":"Ajouter"} un avion</h3><button className="btn btn-s btn-ghost" onClick={()=>setModal(null)}>✕</button></div>
-      <div className="mod-b"><div className="fg">
-        <div className="fi"><label>Immatriculation</label><input value={form.immat} onChange={e=>setForm(f=>({...f,immat:e.target.value.toUpperCase()}))} placeholder="F-GXXX"/></div>
-        <div className="fi"><label>Type avion</label><input value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))} placeholder="DR400-120"/></div>
-      </div></div>
+      <div className="mod-b">
+        <div className="fg">
+          <div className="fi"><label>Immatriculation</label><input value={form.immat} onChange={e=>setForm(f=>({...f,immat:e.target.value.toUpperCase()}))} placeholder="F-GXXX"/></div>
+          <div className="fi"><label>Type avion</label><input value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))} placeholder="DR400-120"/></div>
+        </div>
+        <div className="fg" style={{marginTop:16}}>
+          <div className="fi"><label>Type carburant</label><input value={form.carbuType} onChange={e=>setForm(f=>({...f,carbuType:e.target.value}))} placeholder="100LL"/></div>
+          <div className="fi"><label>Type huile</label><input value={form.huileType} onChange={e=>setForm(f=>({...f,huileType:e.target.value}))} placeholder="W100"/></div>
+        </div>
+        <div style={{marginTop:16,display:"flex",alignItems:"center",gap:10}}>
+          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
+            <input type="checkbox" checked={form.blockBlock} onChange={e=>setForm(f=>({...f,blockBlock:e.target.checked}))} style={{width:18,height:18,accentColor:"var(--accent)"}}/>
+            Block-Block <span style={{fontSize:11,color:"var(--text3)"}}>(pas de forfait roulage)</span>
+          </label>
+        </div>
+        <div className="fg" style={{marginTop:16}}>
+          <div className="fi"><label>Actif depuis</label><input type="date" value={form.activeFrom} onChange={e=>setForm(f=>({...f,activeFrom:e.target.value}))}/><span style={{fontSize:11,color:"var(--text3)"}}>Vide = toujours</span></div>
+          <div className="fi"><label>Actif jusqu&apos;au</label><input type="date" value={form.activeTo} onChange={e=>setForm(f=>({...f,activeTo:e.target.value}))}/><span style={{fontSize:11,color:"var(--text3)"}}>Vide = encore actif</span></div>
+        </div>
+      </div>
       <div className="mod-f"><button className="btn" onClick={()=>setModal(null)}>Annuler</button><button className="btn btn-p" onClick={save}>Enregistrer</button></div>
     </div></div>)}
   </div>);

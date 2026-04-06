@@ -8,6 +8,11 @@ CREATE TABLE aircraft (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   immat TEXT NOT NULL,
   type TEXT NOT NULL,
+  carbu_type TEXT DEFAULT '100LL',
+  huile_type TEXT DEFAULT 'W100',
+  block_block BOOLEAN DEFAULT false,
+  active_from DATE,              -- NULL = always active
+  active_to DATE,                -- NULL = still active
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
