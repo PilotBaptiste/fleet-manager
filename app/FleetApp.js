@@ -969,7 +969,9 @@ function ImportCSV({ data, db }) {
       imported++;
     }
 
-    setResult({ imported, skipped, newAircraft: agg.unknownImmats.length });
+    const nbAc = new Set(agg.monthly.map(r => r.immat)).size;
+    const nbMo = new Set(agg.monthly.map(r => r.month)).size;
+    setResult({ imported, skipped, newAircraft: agg.unknownImmats.length, nbAc, nbMo, year: importYear });
     setImporting(false);
     setStep("done");
     db.reload();
@@ -1047,7 +1049,7 @@ function ImportCSV({ data, db }) {
 
         {/* Monthly preview table */}
         <div className="card">
-          <div className="card-h"><h2>Aperçu par avion / mois ({agg.monthly.length} lignes)</h2></div>
+          <div className="card-h"><h2>Aperçu — {importYear} ({new Set(agg.monthly.map(r=>r.immat)).size} avions × {new Set(agg.monthly.map(r=>r.month)).size} mois)</h2></div>
           <div className="tw" style={{maxHeight:400,overflowY:"auto"}}><table>
             <thead><tr><th>Avion</th><th>Mois</th><th>H. CdB</th><th>H. DC</th><th>Total</th><th>Mvts</th><th>Carbu (L)</th><th>Montant</th></tr></thead>
             <tbody>{agg.monthly.map((r, i) => (
@@ -1059,7 +1061,7 @@ function ImportCSV({ data, db }) {
                 <td className="num" style={{fontWeight:600}}>{fH(r.heures + r.heuresDc)}</td>
                 <td className="num">{r.rotations}</td>
                 <td className="num">{r.carbu > 0 ? Math.round(r.carbu) + " L" : "—"}</td>
-                <td className="num">{r.montant > 0 ? fmt(r.montant) : "—"}</td>
+                <td className="num">{fmt(r.montant)}</td>
               </tr>
             ))}</tbody>
           </table></div>
@@ -1069,7 +1071,7 @@ function ImportCSV({ data, db }) {
         <div style={{display:"flex",gap:12,justifyContent:"flex-end",marginTop:8}}>
           <button className="btn" onClick={reset}>Annuler</button>
           <button className="btn btn-p" onClick={doImport} disabled={importing}>
-            {importing ? "Import en cours…" : `Importer ${agg.monthly.length} mois d'activité`}
+            {importing ? "Import en cours…" : `Importer ${importYear} (${new Set(agg.monthly.map(r=>r.immat)).size} avions)`}
           </button>
         </div>
       </div>
@@ -1081,7 +1083,7 @@ function ImportCSV({ data, db }) {
         <div className="card-h"><h2 style={{color:"var(--green)"}}>Import terminé</h2></div>
         <div className="card-b" style={{textAlign:"center",padding:40}}>
           <div style={{fontSize:48,marginBottom:12}}>✓</div>
-          <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>{result.imported} mois importés</div>
+          <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>Import {result.year} terminé — {result.nbAc} avions × {result.nbMo} mois</div>
           {result.newAircraft > 0 && <div style={{fontSize:13,color:"var(--orange)",marginBottom:4}}>{result.newAircraft} avion(s) créé(s)</div>}
           {result.skipped > 0 && <div style={{fontSize:13,color:"var(--text3)"}}>{result.skipped} ignoré(s)</div>}
           <button className="btn btn-p" onClick={reset} style={{marginTop:20}}>Nouvel import</button>
