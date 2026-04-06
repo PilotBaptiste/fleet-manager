@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
 import { useFleetData } from "../lib/useFleetData";
-import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, RATE_GROUPS, getRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, revenuePerHour, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis } from "../lib/calc";
+import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, revenuePerHour, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis } from "../lib/calc";
 
 export default function FleetApp({ onLogout }) {
   const db = useFleetData();
@@ -259,11 +259,10 @@ function Activity({ data, db, year }) {
   if (!data.aircraft.length) return <div className="card"><div className="empty">Ajoutez des avions dans Flotte.</div></div>;
 
   const upd = (i, act, field, val) => {
-    const h = field==="heures"?pf(val):(act.heures||0);
+    const h = field==="heures"?hmToDecimal(val):(act.heures||0);
     const r = field==="rotations"?pf(val):(act.rotations||0);
-    const hd = field==="heuresDc"?pf(val):(act.heuresDc||0);
-    const rd = field==="rotationsDc"?pf(val):(act.rotationsDc||0);
-    db.setMonthly(acId,year,i,h,r,hd,rd);
+    const hd = field==="heuresDc"?hmToDecimal(val):(act.heuresDc||0);
+    db.setMonthly(acId,year,i,h,r,hd);
   };
 
   return (<div>
@@ -274,26 +273,26 @@ function Activity({ data, db, year }) {
       <div className="tw"><table>
         <thead><tr>
           <th>Mois</th>
-          <th style={{color:"var(--accent)"}}>H. CdB</th><th style={{color:"var(--accent)"}}>Vols CdB</th>
-          <th style={{color:"var(--orange)"}}>H. DC</th><th style={{color:"var(--orange)"}}>Vols DC</th>
-          <th>Tarif (€/h)</th><th>Roulage</th>
+          <th style={{color:"var(--accent)"}}>H. CdB</th>
+          <th style={{color:"var(--orange)"}}>H. DC</th>
+          <th>Mvts</th>
+          <th>Tarif</th><th>Roulage</th>
           <th>Rev. CdB</th><th>Rev. DC</th><th>Rev. roulage</th><th>Total</th>
         </tr></thead>
         <tbody>{MOS.map((m,i) => {
           const act = getActivity(data,acId,year,i);
           const tarif = getRate(data.rates,acId,"tarifHeure",year,i);
-          const forfaitMin = getRate(data.rates,acId,"forfaitRoulage",year,i);
+          const forfaitMin = getGlobalRate(data.rates,"forfaitRoulage",year,i);
           const fEur = (forfaitMin/60)*tarif;
-          const revCdb = (act.heures||0)*tarif + (act.rotations||0)*fEur;
-          const revDc = (act.heuresDc||0)*tarif + (act.rotationsDc||0)*fEur;
-          const revRoulage = ((act.rotations||0)+(act.rotationsDc||0))*fEur;
-          const total = revCdb + revDc;
+          const revCdb = (act.heures||0)*tarif;
+          const revDc = (act.heuresDc||0)*tarif;
+          const revRoulage = (act.rotations||0)*fEur;
+          const total = revCdb + revDc + revRoulage;
           return (<tr key={i}>
             <td className="tx" style={{fontWeight:600}}>{m}</td>
-            <td><input type="number" step="0.1" min="0" value={act.heures||""} placeholder="0" onChange={e=>upd(i,act,"heures",e.target.value)} style={{...inpSt,width:75}}/></td>
-            <td><input type="number" step="1" min="0" value={act.rotations||""} placeholder="0" onChange={e=>upd(i,act,"rotations",e.target.value)} style={{...inpSt,width:60}}/></td>
-            <td><input type="number" step="0.1" min="0" value={act.heuresDc||""} placeholder="0" onChange={e=>upd(i,act,"heuresDc",e.target.value)} style={{...inpSt,width:75,borderColor:"var(--orange-s)"}}/></td>
-            <td><input type="number" step="1" min="0" value={act.rotationsDc||""} placeholder="0" onChange={e=>upd(i,act,"rotationsDc",e.target.value)} style={{...inpSt,width:60,borderColor:"var(--orange-s)"}}/></td>
+            <td><input type="text" placeholder="0:00" value={act.heures?decimalToHM(act.heures):""} onChange={e=>upd(i,act,"heures",e.target.value)} style={{...inpSt,width:70}} onBlur={e=>{const v=hmToDecimal(e.target.value);if(v)e.target.value=decimalToHM(v);}}/></td>
+            <td><input type="text" placeholder="0:00" value={act.heuresDc?decimalToHM(act.heuresDc):""} onChange={e=>upd(i,act,"heuresDc",e.target.value)} style={{...inpSt,width:70,borderColor:"var(--orange-s)"}} onBlur={e=>{const v=hmToDecimal(e.target.value);if(v)e.target.value=decimalToHM(v);}}/></td>
+            <td><input type="number" step="1" min="0" value={act.rotations||""} placeholder="0" onChange={e=>upd(i,act,"rotations",e.target.value)} style={{...inpSt,width:55}}/></td>
             <td className="num" style={{color:"var(--text3)",fontSize:12}}>{tarif>0?fmt2(tarif):"—"}</td>
             <td className="num" style={{color:"var(--text3)",fontSize:12}}>{forfaitMin>0?forfaitMin+"min":"—"}</td>
             <td className="num" style={{color:"var(--accent)"}}>{revCdb>0?fmt(revCdb):"—"}</td>
@@ -310,15 +309,45 @@ function Activity({ data, db, year }) {
 // ════════ RATES ════════
 function Rates({ data, db, modal, setModal }) {
   const [acId, setAcId] = useState(data.aircraft[0]?.id || null);
-  const [form, setForm] = useState({ field:"", value:"", fromYear:new Date().getFullYear(), fromMonth:new Date().getMonth() });
+  const [form, setForm] = useState({ field:"", value:"", fromYear:new Date().getFullYear(), fromMonth:new Date().getMonth(), global:false });
 
-  const openAdd = (fieldKey) => { setForm({field:fieldKey,value:"",fromYear:new Date().getFullYear(),fromMonth:new Date().getMonth()}); setModal("rate"); };
-  const save = async () => { if (!acId || !form.field) return; await db.addRate(acId, form.field, pf(form.value), parseInt(form.fromYear), parseInt(form.fromMonth)); setModal(null); };
+  const openAdd = (fieldKey, isGlobal) => { setForm({field:fieldKey,value:"",fromYear:new Date().getFullYear(),fromMonth:new Date().getMonth(),global:isGlobal}); setModal("rate"); };
+  const save = async () => {
+    if (!form.field) return;
+    if (form.global) { await db.addGlobalRate(form.field, pf(form.value), parseInt(form.fromYear), parseInt(form.fromMonth)); }
+    else { if (!acId) return; await db.addRate(acId, form.field, pf(form.value), parseInt(form.fromYear), parseInt(form.fromMonth)); }
+    setModal(null);
+  };
 
   if (!data.aircraft.length) return <div className="card"><div className="empty">Ajoutez des avions dans Flotte.</div></div>;
 
   return (<div>
-    <div className="sec-t">Avion</div>
+    {/* ── Paramètres club (global) ── */}
+    <div className="card">
+      <div className="card-h"><h2>Paramètres club</h2></div>
+      <div className="card-b">
+        <p style={{fontSize:12,color:"var(--text3)",marginBottom:14}}>S&apos;applique à tous les avions.</p>
+        {GLOBAL_RATE_FIELDS.map(field => {
+          const periods = data.rates.filter(r => r.field===field.key).sort((a,b) => (a.fromYear*12+a.fromMonth) - (b.fromYear*12+b.fromMonth));
+          return (<div key={field.key} style={{marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <div><span style={{fontSize:13,fontWeight:600}}>{field.label}</span>{field.help && <span style={{fontSize:11,color:"var(--text3)",marginLeft:8}}>{field.help}</span>}</div>
+              <button className="btn btn-s btn-p" onClick={() => openAdd(field.key, true)}>+ Période</button>
+            </div>
+            {periods.length === 0 && <div style={{fontSize:13,color:"var(--text3)",padding:"8px 0"}}>Aucune valeur définie</div>}
+            {periods.map(p => (<div className="rate-period" key={p.id}>
+              <div className="rp-date">À partir de {MOS[p.fromMonth]} {p.fromYear}</div>
+              <div className="rp-val">{p.value} min</div>
+              <div style={{flex:1}}/>
+              <button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteRate(p.id)}>✕</button>
+            </div>))}
+          </div>);
+        })}
+      </div>
+    </div>
+
+    {/* ── Tarifs par avion ── */}
+    <div className="sec-t">Tarifs & coûts par avion</div>
     <div className="chips">{data.aircraft.map(a => <button key={a.id} className={`chip ${acId===a.id?"on":""}`} onClick={() => setAcId(a.id)}>{a.immat}</button>)}</div>
     <p style={{fontSize:13,color:"var(--text3)",marginBottom:20}}>Chaque valeur s&apos;applique à partir de la date indiquée jusqu&apos;à ce qu&apos;une nouvelle la remplace.</p>
 
@@ -331,7 +360,7 @@ function Rates({ data, db, modal, setModal }) {
             return (<div key={field.key} style={{marginBottom:16}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                 <div><span style={{fontSize:13,fontWeight:600}}>{field.label}</span>{field.help && <span style={{fontSize:11,color:"var(--text3)",marginLeft:8}}>{field.help}</span>}</div>
-                <button className="btn btn-s btn-p" onClick={() => openAdd(field.key)}>+ Période</button>
+                <button className="btn btn-s btn-p" onClick={() => openAdd(field.key, false)}>+ Période</button>
               </div>
               {periods.length === 0 && <div style={{fontSize:13,color:"var(--text3)",padding:"8px 0"}}>Aucune valeur définie</div>}
               {periods.map(p => (<div className="rate-period" key={p.id}>
@@ -348,7 +377,7 @@ function Rates({ data, db, modal, setModal }) {
     ))}
 
     {modal === "rate" && (<div className="mo" onClick={() => setModal(null)}><div className="mod" onClick={e => e.stopPropagation()}>
-      <div className="mod-h"><h3>Nouvelle période</h3><button className="btn btn-s btn-ghost" onClick={() => setModal(null)}>✕</button></div>
+      <div className="mod-h"><h3>Nouvelle période {form.global?"(club)":""}</h3><button className="btn btn-s btn-ghost" onClick={() => setModal(null)}>✕</button></div>
       <div className="mod-b"><div className="fg">
         <div className="fi"><label>Année</label><select value={form.fromYear} onChange={e => setForm(f => ({...f,fromYear:e.target.value}))}>{YEARS.map(y => <option key={y} value={y}>{y}</option>)}</select></div>
         <div className="fi"><label>Mois</label><select value={form.fromMonth} onChange={e => setForm(f => ({...f,fromMonth:e.target.value}))}>{MO.map((m,i) => <option key={i} value={i}>{m}</option>)}</select></div>
@@ -494,7 +523,7 @@ function Simulation({ data, year }) {
       data.aircraft.forEach(ac => {
         const cur = aggAC(data,ac.id,year,ALL12);
         const tarif = getRate(data.rates,ac.id,"tarifHeure",year,lm);
-        const forfaitMin = getRate(data.rates,ac.id,"forfaitRoulage",year,lm);
+        const forfaitMin = getGlobalRate(data.rates,"forfaitRoulage",year,lm);
         const pC = getRate(data.rates,ac.id,"prixCarburant",year,lm);
         const cC = getRate(data.rates,ac.id,"consoCarburant",year,lm);
         const mH = getRate(data.rates,ac.id,"maintenanceHoraire",year,lm);

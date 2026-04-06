@@ -25,16 +25,15 @@ CREATE TABLE rates (
 
 CREATE INDEX idx_rates_ac ON rates(ac_id, field, from_year, from_month);
 
--- Monthly activity (heures + rotations par type de vol)
+-- Monthly activity (heures CdB + DC, mouvements)
 CREATE TABLE monthly (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ac_id UUID REFERENCES aircraft(id) ON DELETE CASCADE,
   year INT NOT NULL,
   month INT NOT NULL,          -- 0-11
   heures NUMERIC DEFAULT 0,    -- heures CdB (commandant de bord)
-  rotations INT DEFAULT 0,     -- rotations CdB
+  rotations INT DEFAULT 0,     -- nombre de mouvements (tous types confondus)
   heures_dc NUMERIC DEFAULT 0, -- heures Double Commande
-  rotations_dc INT DEFAULT 0,  -- rotations Double Commande
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(ac_id, year, month)
 );
