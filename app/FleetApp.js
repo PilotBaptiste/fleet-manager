@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
 import { useFleetData } from "../lib/useFleetData";
-import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, RATE_GROUPS, getRate, getActivity, loanPayment, calcMonth, aggAC, globAgg } from "../lib/calc";
+import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, RATE_GROUPS, getRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, revenuePerHour, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis } from "../lib/calc";
 
 export default function FleetApp({ onLogout }) {
   const db = useFleetData();
@@ -62,8 +62,19 @@ function Dashboard({ data, year }) {
   const [q, setQ] = useState(0);
   const range = view === "trimestre" ? QM[q] : ALL12;
   const g = globAgg(data, year, range);
+  const gPrev = globAgg(data, year - 1, range);
+  const revH = revenuePerHour(g);
 
   if (!data.aircraft.length) return <div className="card"><div className="empty">Commencez par ajouter vos avions dans l&apos;onglet <strong>Flotte</strong>.</div></div>;
+
+  // Per-aircraft data sorted by profitability
+  const acData = data.aircraft.map(ac => ({ ac, f: aggAC(data, ac.id, year, range), fPrev: aggAC(data, ac.id, year - 1, range) })).sort((a,b) => b.f.resultat - a.f.resultat);
+  const best = acData[0];
+  const worst = acData[acData.length - 1];
+  const maxAbs = Math.max(1, ...acData.map(x => Math.abs(x.f.resultat)));
+
+  // Delta helper
+  const dFmt = (cur, prev) => { const d = cur - prev; return d === 0 ? null : { val: d, txt: (d>0?"+":"") + fmt(d), cls: d>0?"delta-up":"delta-dn" }; };
 
   return (
     <div>
@@ -71,43 +82,115 @@ function Dashboard({ data, year }) {
         <button className={`chip ${view==="annuel"?"on":""}`} onClick={() => setView("annuel")}>Année {year}</button>
         {QL.map((l,i) => <button key={i} className={`chip ${view==="trimestre"&&q===i?"on":""}`} onClick={() => {setView("trimestre");setQ(i);}}>{l}</button>)}
       </div>
+
+      {/* ── KPI Cards ── */}
       <div className="sg">
         <div className="sc"><div className="sc-l">REVENUS</div><div className="sc-v b">{fmt(g.revenu)}</div><div className="sc-s">{fH(g.heures)} · {g.rotations} vols</div></div>
         <div className="sc"><div className="sc-l">DÉPENSES</div><div className="sc-v o">{fmt(g.depenses)}</div><div className="sc-s">Fixes {fmt(g.fixe)} · Var {fmt(g.variable)}</div></div>
         <div className="sc hl" style={{borderColor:g.resultat>=0?"var(--green)":"var(--red)"}}>
           <div className="sc-l" style={{color:g.resultat>=0?"var(--green)":"var(--red)"}}>{g.resultat>=0?"✓ BÉNÉFICE":"✗ DÉFICIT"}</div>
           <div className={`sc-v ${g.resultat>=0?"g":"r"}`}>{g.resultat>=0?"+":""}{fmt(g.resultat)}</div>
-          <div className="sc-s">Marge : {g.revenu>0?fP(g.resultat/g.revenu):"—"}</div>
+          <div className="sc-s">
+            Marge : {g.revenu>0?fP(g.resultat/g.revenu):"—"}
+            {gPrev.revenu > 0 && (() => { const d = dFmt(g.resultat, gPrev.resultat); return d ? <span style={{marginLeft:8}} className={`delta ${d.cls}`}>vs {year-1} : {d.txt}</span> : null; })()}
+          </div>
         </div>
+        <div className="sc"><div className="sc-l">REVENU / HEURE</div><div className="sc-v b">{g.heures>0?fmt2(revH):"—"}</div><div className="sc-s">Coût/h : {g.heures>0?fmt2(g.depenses/g.heures):"—"}</div></div>
+        <div className="sc"><div className="sc-l">MARGE OPÉRATIONNELLE</div><div className={`sc-v ${g.resultat>=0?"g":"r"}`}>{g.revenu>0?fP(g.resultat/g.revenu):"—"}</div></div>
         {g.loan > 0 && <div className="sc"><div className="sc-l">PRÊTS</div><div className="sc-v p">{fmt(g.loan)}</div></div>}
       </div>
 
+      {/* ── Synthèse CA ── */}
       <div className="card">
-        <div className="card-h"><h2>Rentabilité par avion <span className="badge">{view==="annuel"?year:QL[q]+" "+year}</span></h2></div>
+        <div className="card-h">
+          <h2>Synthèse pour le CA <span className="badge">{view==="annuel"?year:QL[q]+" "+year}</span></h2>
+          <span className={`tag ${g.resultat>=0?"tag-g":"tag-r"}`} style={{fontSize:13,padding:"5px 14px"}}>{g.resultat>=0?"FLOTTE RENTABLE":"FLOTTE DÉFICITAIRE"}</span>
+        </div>
+        <div className="card-b">
+          <p style={{fontSize:13,color:"var(--text2)",marginBottom:16,lineHeight:1.6}}>
+            {best && worst && acData.length > 1
+              ? <>L&apos;avion le plus rentable est <strong style={{color:"var(--accent)"}}>{best.ac.immat}</strong> ({best.f.resultat>=0?"+":""}{fmt(best.f.resultat)}). L&apos;avion le plus coûteux est <strong style={{color:"var(--accent)"}}>{worst.ac.immat}</strong> ({worst.f.resultat>=0?"+":""}{fmt(worst.f.resultat)}).</>
+              : acData.length === 1
+              ? <>Un seul avion : <strong style={{color:"var(--accent)"}}>{best.ac.immat}</strong> — résultat : {best.f.resultat>=0?"+":""}{fmt(best.f.resultat)}.</>
+              : null
+            }
+          </p>
+          {acData.map((x,i) => (
+            <div className="synth-row" key={x.ac.id}>
+              <div className="synth-rank">{i+1}</div>
+              <div className="synth-immat">{x.ac.immat}</div>
+              <div className="synth-bar-wrap">
+                <div className="synth-bar" style={{width: `${Math.max(2,(Math.abs(x.f.resultat)/maxAbs)*100)}%`, background: x.f.resultat>=0?"var(--green)":"var(--red)"}}/>
+              </div>
+              <div className="synth-val" style={{color:x.f.resultat>=0?"var(--green)":"var(--red)"}}>{x.f.resultat>=0?"+":""}{fmt(x.f.resultat)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Seuil de rentabilité ── */}
+      <div className="card">
+        <div className="card-h"><h2>Seuil de rentabilité <span className="badge">{view==="annuel"?year:QL[q]+" "+year}</span></h2></div>
         <div className="tw"><table>
-          <thead><tr><th>Avion</th><th>Type</th><th>Heures</th><th>Vols</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>Coût/h</th><th>Verdict</th></tr></thead>
-          <tbody>{data.aircraft.map(ac => {
-            const f = aggAC(data,ac.id,year,range);
-            const ok = f.resultat >= 0;
+          <thead><tr><th>Avion</th><th>Type</th><th>Heures actuelles</th><th>Heures seuil</th><th>Marge (h)</th><th>Atteinte</th><th>Statut</th></tr></thead>
+          <tbody>{acData.map(({ac, f}) => {
+            const be = breakEvenHours(data, ac.id, year, range);
+            const beOk = be !== Infinity;
+            const margin = f.heures - be;
+            const pct = beOk && be > 0 ? f.heures / be : (f.heures > 0 ? 1 : 0);
+            const status = pct >= 1 ? "tag-g" : pct >= 0.7 ? "tag-o" : "tag-r";
+            const statusTxt = pct >= 1 ? "ATTEINT" : pct >= 0.7 ? "PROCHE" : "INSUFFISANT";
             return (<tr key={ac.id}>
               <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
               <td className="tx">{ac.type}</td>
-              <td className="num">{fH(f.heures)}</td><td className="num">{f.rotations}</td>
-              <td className="num" style={{color:"var(--accent)"}}>{fmt(f.revenu)}</td>
-              <td className="num">{fmt(f.depenses)}</td>
-              <td className={ok?"pos":"neg"}>{ok?"+":""}{fmt(f.resultat)}</td>
-              <td className="num">{f.heures>0?fmt2(f.coutH):"—"}</td>
-              <td><span className={`tag ${ok?"tag-g":"tag-r"}`}>{ok?"RENTABLE":"DÉFICIT"}</span></td>
+              <td className="num">{fH(f.heures)}</td>
+              <td className="num">{beOk ? fH(be) : "N/A"}</td>
+              <td className={margin>=0?"pos":"neg"}>{beOk ? (margin>=0?"+":"") + fH(margin) : "—"}</td>
+              <td className="num">{beOk ? fP(pct) : "—"}</td>
+              <td><span className={`tag ${status}`}>{statusTxt}</span></td>
             </tr>);
           })}</tbody>
         </table></div>
       </div>
 
+      {/* ── Rentabilité par avion ── */}
+      <div className="card">
+        <div className="card-h"><h2>Rentabilité par avion <span className="badge">{view==="annuel"?year:QL[q]+" "+year}</span></h2></div>
+        <div className="tw"><table>
+          <thead><tr><th>Avion</th><th>Type</th><th>Heures</th><th>Vols</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>Coût/h</th><th>Revenu/h</th><th>Verdict</th></tr></thead>
+          <tbody>{acData.map(({ac, f, fPrev}) => {
+            const ok = f.resultat >= 0;
+            const dRes = dFmt(f.resultat, fPrev.resultat);
+            const dH = f.heures - fPrev.heures;
+            return (<>
+              <tr key={ac.id}>
+                <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
+                <td className="tx">{ac.type}</td>
+                <td className="num">{fH(f.heures)}</td><td className="num">{f.rotations}</td>
+                <td className="num" style={{color:"var(--accent)"}}>{fmt(f.revenu)}</td>
+                <td className="num">{fmt(f.depenses)}</td>
+                <td className={ok?"pos":"neg"}>{ok?"+":""}{fmt(f.resultat)}</td>
+                <td className="num">{f.heures>0?fmt2(f.coutH):"—"}</td>
+                <td className="num" style={{color:"var(--accent)"}}>{f.heures>0?fmt2(f.revenu/f.heures):"—"}</td>
+                <td><span className={`tag ${ok?"tag-g":"tag-r"}`}>{ok?"RENTABLE":"DÉFICIT"}</span></td>
+              </tr>
+              {(fPrev.heures > 0 || fPrev.revenu > 0) && <tr key={ac.id+"-cmp"} style={{background:"var(--bg)"}}>
+                <td colSpan={2} style={{fontSize:11,color:"var(--text3)",paddingTop:4,paddingBottom:4}}>vs {year-1}</td>
+                <td className="num" style={{fontSize:11,color:dH>=0?"var(--green)":"var(--red)"}}>{dH>=0?"+":""}{dH.toFixed(1)}h</td>
+                <td colSpan={3}></td>
+                <td colSpan={2} style={{fontSize:11}}>{dRes && <span className={`delta ${dRes.cls}`}>{dRes.txt}</span>}</td>
+                <td colSpan={2}></td>
+              </tr>}
+            </>);
+          })}</tbody>
+        </table></div>
+      </div>
+
+      {/* ── Décomposition des coûts ── */}
       <div className="card">
         <div className="card-h"><h2>Décomposition des coûts</h2></div>
         <div className="card-b">
-          {data.aircraft.map(ac => {
-            const f = aggAC(data,ac.id,year,range);
+          {acData.map(({ac, f}) => {
             if (f.depenses === 0) return null;
             const items = [
               {l:"Coûts fixes",v:f.fixe,c:"#2563eb"},{l:"Carburant",v:f.carburant,c:"#d97706"},
@@ -116,17 +199,25 @@ function Dashboard({ data, year }) {
             ].filter(x => x.v > 0);
             return (<div key={ac.id} style={{marginBottom:20}}>
               <div style={{fontSize:14,fontWeight:700,marginBottom:10,color:"var(--accent)"}}>{ac.immat} — {ac.type}</div>
-              {items.map((it,i) => <div className="cb-row" key={i}><div className="cb-dot" style={{background:it.c}}/><div className="cb-label">{it.l}</div><div className="cb-val">{fmt(it.v)}</div><div className="cb-pct">{fP(it.v/f.depenses)}</div></div>)}
+              {items.map((it,i) => <div className="cb-row" key={i}>
+                <div className="cb-dot" style={{background:it.c}}/>
+                <div className="cb-label">{it.l}</div>
+                <div className="cb-bar-wrap"><div className="cb-bar" style={{width:`${(it.v/f.depenses*100).toFixed(1)}%`,background:it.c}}/></div>
+                <div className="cb-val">{fmt(it.v)}</div>
+                <div className="cb-pct">{fP(it.v/f.depenses)}</div>
+              </div>)}
             </div>);
           })}
         </div>
       </div>
 
+      {/* ── Résultat mensuel ── */}
       <div className="card">
         <div className="card-h"><h2>Résultat mensuel {year}</h2></div>
         <div className="card-b"><BarChart data={data} year={year}/></div>
       </div>
 
+      {/* ── Historique ── */}
       <div className="card">
         <div className="card-h"><h2>Historique 2022 – 2026</h2></div>
         <div className="tw"><table>
@@ -337,76 +428,411 @@ function LoansTab({ data, db, modal, setModal }) {
 
 // ════════ SIMULATION ════════
 function Simulation({ data, year }) {
+  const [mode, setMode] = useState("global");
+  const [selAc, setSelAc] = useState(data.aircraft[0]?.id || null);
+  const [overrides, setOverrides] = useState({});
+  const [scenarios, setScenarios] = useState([]);
   const [adjH, setAdjH] = useState(0);
   const [adjT, setAdjT] = useState(0);
   const [adjC, setAdjC] = useState(0);
   const [adjF, setAdjF] = useState(0);
+  const [beOverrides, setBeOverrides] = useState({});
+  const [sensAc, setSensAc] = useState(data.aircraft[0]?.id || null);
+  const [sensField, setSensField] = useState("tarifHeure");
+  const [excludedAc, setExcludedAc] = useState(new Set());
+  const [scenName, setScenName] = useState("");
 
-  const current = useMemo(() => globAgg(data,year,ALL12), [data,year]);
+  const lm = Math.min(11, new Date().getMonth());
+  const current = useMemo(() => globAgg(data, year, ALL12), [data, year]);
 
-  const proj = useMemo(() => {
-    let tR=0, tD=0, tH=0;
-    const items = [];
-    data.aircraft.forEach(ac => {
-      const cur = aggAC(data,ac.id,year,ALL12);
-      const lm = Math.min(11, new Date().getMonth());
-      const tarif = getRate(data.rates,ac.id,"tarifHeure",year,lm);
-      const forfait = getRate(data.rates,ac.id,"forfaitRoulage",year,lm);
-      const pC = getRate(data.rates,ac.id,"prixCarburant",year,lm);
-      const cC = getRate(data.rates,ac.id,"consoCarburant",year,lm);
-      const mH = getRate(data.rates,ac.id,"maintenanceHoraire",year,lm);
-      const newH = cur.heures*(1+adjH/100);
-      const rev = newH*tarif*(1+adjT/100) + cur.rotations*forfait*(1+adjT/100);
-      const varC = newH*cC*pC*(1+adjC/100) + newH*mH;
-      const dep = cur.fixe*(1+adjF/100) + varC + cur.loan + cur.opsC;
-      const res = rev-dep;
-      items.push({ac,heures:newH,rev,dep,res,delta:res-cur.resultat});
-      tR += rev; tD += dep; tH += newH;
-    });
-    return { items, tR, tD, tRes:tR-tD, tH };
-  }, [data,year,adjH,adjT,adjC,adjF]);
+  const setOv = (acId, key, val) => {
+    setOverrides(prev => ({ ...prev, [acId]: { ...(prev[acId] || {}), [key]: val } }));
+  };
+  const clearOv = (acId) => { setOverrides(prev => { const n = {...prev}; delete n[acId]; return n; }); };
+
+  const modes = [
+    {id:"global",l:"Projection globale"},{id:"aircraft",l:"Par avion"},{id:"breakeven",l:"Seuil de rentabilité"},
+    {id:"sensitivity",l:"Sensibilité"},{id:"fleet",l:"Ajout / Retrait"},
+  ];
 
   if (!data.aircraft.length) return <div className="card"><div className="empty">Ajoutez des données pour simuler.</div></div>;
 
-  return (<div>
-    <div className="card">
-      <div className="card-h"><h2>Projection <span className="badge">base {year}</span></h2><button className="btn btn-s" onClick={() => {setAdjH(0);setAdjT(0);setAdjC(0);setAdjF(0);}}>Réinitialiser</button></div>
+  // ── MODE: Global projection ──
+  const GlobalMode = () => {
+    const proj = (() => {
+      let tR=0, tD=0, tH=0;
+      const items = [];
+      data.aircraft.forEach(ac => {
+        const cur = aggAC(data,ac.id,year,ALL12);
+        const tarif = getRate(data.rates,ac.id,"tarifHeure",year,lm);
+        const forfait = getRate(data.rates,ac.id,"forfaitRoulage",year,lm);
+        const pC = getRate(data.rates,ac.id,"prixCarburant",year,lm);
+        const cC = getRate(data.rates,ac.id,"consoCarburant",year,lm);
+        const mH = getRate(data.rates,ac.id,"maintenanceHoraire",year,lm);
+        const newH = cur.heures*(1+adjH/100);
+        const rev = newH*tarif*(1+adjT/100) + cur.rotations*forfait*(1+adjT/100);
+        const varC = newH*cC*pC*(1+adjC/100) + newH*mH;
+        const dep = cur.fixe*(1+adjF/100) + varC + cur.loan + cur.opsC;
+        const res = rev-dep;
+        items.push({ac,heures:newH,rev,dep,res,delta:res-cur.resultat});
+        tR += rev; tD += dep; tH += newH;
+      });
+      return { items, tR, tD, tRes:tR-tD, tH };
+    })();
+
+    const saveScenario = () => {
+      if (!scenName.trim()) return;
+      setScenarios(prev => [...prev, {name:scenName.trim(),adjH,adjT,adjC,adjF,res:proj.tRes,rev:proj.tR,dep:proj.tD}]);
+      setScenName("");
+    };
+
+    return (<>
+      <div className="card">
+        <div className="card-h"><h2>Projection globale <span className="badge">base {year}</span></h2><button className="btn btn-s" onClick={() => {setAdjH(0);setAdjT(0);setAdjC(0);setAdjF(0);}}>Réinitialiser</button></div>
+        <div className="card-b">
+          <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Déplacez les curseurs pour voir l&apos;impact sur le résultat de la flotte.</p>
+          {[
+            {l:"Heures de vol",v:adjH,set:setAdjH,min:-50,max:100,inv:false},
+            {l:"Tarif horaire + roulage",v:adjT,set:setAdjT,min:-30,max:50,inv:false},
+            {l:"Prix carburant",v:adjC,set:setAdjC,min:-30,max:80,inv:true},
+            {l:"Coûts fixes",v:adjF,set:setAdjF,min:-30,max:50,inv:true},
+          ].map(s => (<div className="sl-row" key={s.l}>
+            <label>{s.l}</label>
+            <input type="range" min={s.min} max={s.max} value={s.v} onChange={e => s.set(Number(e.target.value))}/>
+            <div className="sl-val" style={{color:s.v===0?"var(--text)":((s.v>0)!==s.inv)?"var(--green)":"var(--red)"}}>{s.v>0?"+":""}{s.v}%</div>
+          </div>))}
+        </div>
+      </div>
+      <div className="sg">
+        <div className="sc"><div className="sc-l">Résultat actuel</div><div className={`sc-v ${current.resultat>=0?"g":"r"}`}>{current.resultat>=0?"+":""}{fmt(current.resultat)}</div></div>
+        <div className="sc hl" style={{borderColor:proj.tRes>=0?"var(--green)":"var(--red)"}}>
+          <div className="sc-l">Résultat projeté</div>
+          <div className={`sc-v ${proj.tRes>=0?"g":"r"}`}>{proj.tRes>=0?"+":""}{fmt(proj.tRes)}</div>
+          <div className="sc-s">Δ {proj.tRes>current.resultat?"+":""}{fmt(proj.tRes-current.resultat)}</div>
+        </div>
+        <div className="sc"><div className="sc-l">Revenus projetés</div><div className="sc-v b">{fmt(proj.tR)}</div></div>
+        <div className="sc"><div className="sc-l">Heures projetées</div><div className="sc-v">{fH(proj.tH)}</div></div>
+      </div>
+      <div className="card">
+        <div className="card-h"><h2>Détail par avion</h2></div>
+        <div className="tw"><table>
+          <thead><tr><th>Avion</th><th>Heures</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>vs Actuel</th></tr></thead>
+          <tbody>{proj.items.map(({ac,heures,rev,dep,res,delta}) => (<tr key={ac.id}>
+            <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
+            <td className="num">{fH(heures)}</td><td className="num" style={{color:"var(--accent)"}}>{fmt(rev)}</td>
+            <td className="num">{fmt(dep)}</td><td className={res>=0?"pos":"neg"}>{res>=0?"+":""}{fmt(res)}</td>
+            <td style={{color:delta>=0?"var(--green)":"var(--red)",fontWeight:600}}>{delta>=0?"+":""}{fmt(delta)}</td>
+          </tr>))}</tbody>
+        </table></div>
+      </div>
+      {/* Save & compare scenarios */}
+      <div className="card">
+        <div className="card-h"><h2>Scénarios enregistrés</h2></div>
+        <div className="card-b">
+          <div style={{display:"flex",gap:8,marginBottom:16,alignItems:"center"}}>
+            <input value={scenName} onChange={e=>setScenName(e.target.value)} placeholder="Nom du scénario…" style={{flex:1,padding:"8px 12px",border:"1px solid var(--border)",borderRadius:8,fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+            <button className="btn btn-p btn-s" onClick={saveScenario} disabled={!scenName.trim()}>Sauvegarder</button>
+          </div>
+          {!scenarios.length ? <div style={{color:"var(--text3)",fontSize:13}}>Aucun scénario sauvegardé. Ajustez les curseurs puis sauvegardez.</div> : (
+            <div className="tw"><table>
+              <thead><tr><th>Scénario</th><th>Heures</th><th>Tarif</th><th>Carburant</th><th>Fixes</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>vs Actuel</th><th></th></tr></thead>
+              <tbody>{scenarios.map((s,i) => {
+                const d = s.res - current.resultat;
+                return (<tr key={i}>
+                  <td className="tx" style={{fontWeight:600}}>{s.name}</td>
+                  <td className="num">{s.adjH>0?"+":""}{s.adjH}%</td>
+                  <td className="num">{s.adjT>0?"+":""}{s.adjT}%</td>
+                  <td className="num">{s.adjC>0?"+":""}{s.adjC}%</td>
+                  <td className="num">{s.adjF>0?"+":""}{s.adjF}%</td>
+                  <td className="num" style={{color:"var(--accent)"}}>{fmt(s.rev)}</td>
+                  <td className="num">{fmt(s.dep)}</td>
+                  <td className={s.res>=0?"pos":"neg"}>{s.res>=0?"+":""}{fmt(s.res)}</td>
+                  <td><span className={`delta ${d>=0?"delta-up":"delta-dn"}`}>{d>=0?"+":""}{fmt(d)}</span></td>
+                  <td><button className="btn btn-s btn-d btn-ghost" onClick={() => setScenarios(prev=>prev.filter((_,j)=>j!==i))}>✕</button></td>
+                </tr>);
+              })}</tbody>
+            </table></div>
+          )}
+        </div>
+      </div>
+    </>);
+  };
+
+  // ── MODE: Per-aircraft ──
+  const AircraftMode = () => {
+    const ac = data.aircraft.find(a => a.id === selAc);
+    if (!ac) return null;
+    const ov = overrides[selAc] || {};
+    const cur = aggAC(data, ac.id, year, ALL12);
+    const proj = aggACWithOverrides(data, ac.id, year, ALL12, ov);
+    const fleetCur = current;
+    const fleetProj = globAggWithOverrides(data, year, ALL12, overrides);
+    const hasOv = Object.keys(ov).length > 0;
+
+    const allFields = RATE_GROUPS.flatMap(g => g.fields);
+
+    return (<>
+      <div className="sec-t">Avion</div>
+      <div className="chips">{data.aircraft.map(a => <button key={a.id} className={`chip ${selAc===a.id?"on":""}`} onClick={() => setSelAc(a.id)}>{a.immat} — {a.type}{overrides[a.id] ? " ●" : ""}</button>)}</div>
+
+      <div className="card">
+        <div className="card-h"><h2>Paramètres simulés <span className="badge">{ac.immat}</span></h2>{hasOv && <button className="btn btn-s btn-d" onClick={() => clearOv(selAc)}>Réinitialiser</button>}</div>
+        <div className="card-b">
+          <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Modifiez les valeurs pour simuler. Les champs modifiés sont surlignés en bleu.</p>
+          {RATE_GROUPS.map(group => (
+            <div key={group.group} style={{marginBottom:20}}>
+              <div className="sec-t">{group.group}</div>
+              <div className="fg">
+                {group.fields.map(field => {
+                  const curVal = getRate(data.rates, selAc, field.key, year, lm);
+                  const ovVal = ov[field.key];
+                  const isModified = ovVal !== undefined && ovVal !== curVal;
+                  return (<div className={`fi ${isModified?"fi-mod":""}`} key={field.key}>
+                    <label>{field.label}</label>
+                    <input type="number" step={field.step} value={ovVal !== undefined ? ovVal : curVal} onChange={e => setOv(selAc, field.key, pf(e.target.value))}/>
+                    {isModified && <span style={{fontSize:11,color:ovVal>curVal?"var(--green)":"var(--red)"}}>Actuel : {fmt2(curVal)} → {ovVal>curVal?"+":""}{fmt2(ovVal-curVal)}</span>}
+                  </div>);
+                })}
+              </div>
+            </div>
+          ))}
+          <div style={{marginBottom:20}}>
+            <div className="sec-t">Activité projetée (annuelle)</div>
+            <div className="fg">
+              <div className={`fi ${ov.heures !== undefined?"fi-mod":""}`}>
+                <label>Heures de vol</label>
+                <input type="number" step="1" value={ov.heures !== undefined ? ov.heures : Math.round(cur.heures)} onChange={e => setOv(selAc, "heures", pf(e.target.value))}/>
+                {ov.heures !== undefined && ov.heures !== Math.round(cur.heures) && <span style={{fontSize:11,color:ov.heures>cur.heures?"var(--green)":"var(--red)"}}>Actuel : {fH(cur.heures)} → {ov.heures>cur.heures?"+":""}{fH(ov.heures-cur.heures)}</span>}
+              </div>
+              <div className={`fi ${ov.rotations !== undefined?"fi-mod":""}`}>
+                <label>Nombre de vols</label>
+                <input type="number" step="1" value={ov.rotations !== undefined ? ov.rotations : cur.rotations} onChange={e => setOv(selAc, "rotations", pf(e.target.value))}/>
+                {ov.rotations !== undefined && ov.rotations !== cur.rotations && <span style={{fontSize:11,color:ov.rotations>cur.rotations?"var(--green)":"var(--red)"}}>Actuel : {cur.rotations} → {ov.rotations>cur.rotations?"+":""}{ov.rotations-cur.rotations}</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Comparison: Actual vs Projected */}
+      <div className="sg">
+        <div className="sc"><div className="sc-l">RÉSULTAT ACTUEL</div><div className={`sc-v ${cur.resultat>=0?"g":"r"}`}>{cur.resultat>=0?"+":""}{fmt(cur.resultat)}</div><div className="sc-s">Rev {fmt(cur.revenu)} · Dép {fmt(cur.depenses)}</div></div>
+        <div className="sc hl" style={{borderColor:proj.resultat>=0?"var(--green)":"var(--red)"}}>
+          <div className="sc-l">RÉSULTAT PROJETÉ</div>
+          <div className={`sc-v ${proj.resultat>=0?"g":"r"}`}>{proj.resultat>=0?"+":""}{fmt(proj.resultat)}</div>
+          <div className="sc-s">Rev {fmt(proj.revenu)} · Dép {fmt(proj.depenses)}</div>
+        </div>
+        <div className="sc">
+          <div className="sc-l">DELTA</div>
+          <div className={`sc-v ${proj.resultat-cur.resultat>=0?"g":"r"}`}>{proj.resultat-cur.resultat>=0?"+":""}{fmt(proj.resultat-cur.resultat)}</div>
+        </div>
+      </div>
+
+      {/* Detailed comparison table */}
+      <div className="card">
+        <div className="card-h"><h2>Comparaison détaillée</h2></div>
+        <div className="tw"><table>
+          <thead><tr><th>Poste</th><th>Actuel</th><th>Projeté</th><th>Delta</th></tr></thead>
+          <tbody>
+            {[
+              {l:"Revenus",a:cur.revenu,p:proj.revenu},{l:"Coûts fixes",a:cur.fixe,p:proj.fixe},
+              {l:"Coûts variables",a:cur.variable,p:proj.variable},{l:"Prêts",a:cur.loan,p:proj.loan},
+              {l:"Opérations",a:cur.opsC,p:proj.opsC},{l:"Total dépenses",a:cur.depenses,p:proj.depenses},
+              {l:"Résultat",a:cur.resultat,p:proj.resultat},
+            ].map(r => {
+              const d = r.p - r.a;
+              return (<tr key={r.l}>
+                <td className="tx" style={{fontWeight:600}}>{r.l}</td>
+                <td className="num">{fmt(r.a)}</td>
+                <td className="num">{fmt(r.p)}</td>
+                <td>{d !== 0 && <span className={`delta ${(r.l==="Résultat"||r.l==="Revenus"?(d>=0):(d<=0))?"delta-up":"delta-dn"}`}>{d>0?"+":""}{fmt(d)}</span>}</td>
+              </tr>);
+            })}
+          </tbody>
+        </table></div>
+      </div>
+
+      {/* Fleet impact */}
+      <div className="card">
+        <div className="card-h"><h2>Impact sur la flotte</h2></div>
+        <div className="sg" style={{padding:20}}>
+          <div className="sc"><div className="sc-l">Flotte actuelle</div><div className={`sc-v ${fleetCur.resultat>=0?"g":"r"}`}>{fleetCur.resultat>=0?"+":""}{fmt(fleetCur.resultat)}</div></div>
+          <div className="sc hl" style={{borderColor:fleetProj.resultat>=0?"var(--green)":"var(--red)"}}>
+            <div className="sc-l">Flotte projetée</div>
+            <div className={`sc-v ${fleetProj.resultat>=0?"g":"r"}`}>{fleetProj.resultat>=0?"+":""}{fmt(fleetProj.resultat)}</div>
+            <div className="sc-s">Δ {fleetProj.resultat-fleetCur.resultat>=0?"+":""}{fmt(fleetProj.resultat-fleetCur.resultat)}</div>
+          </div>
+        </div>
+      </div>
+    </>);
+  };
+
+  // ── MODE: Break-even ──
+  const BreakevenMode = () => {
+    return (<div className="card">
+      <div className="card-h"><h2>Seuil de rentabilité interactif <span className="badge">{year}</span></h2></div>
       <div className="card-b">
-        <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Déplacez les curseurs pour voir l&apos;impact sur le résultat.</p>
-        {[
-          {l:"Heures de vol",v:adjH,set:setAdjH,min:-50,max:100,inv:false},
-          {l:"Tarif horaire + roulage",v:adjT,set:setAdjT,min:-30,max:50,inv:false},
-          {l:"Prix carburant",v:adjC,set:setAdjC,min:-30,max:80,inv:true},
-          {l:"Coûts fixes",v:adjF,set:setAdjF,min:-30,max:50,inv:true},
-        ].map(s => (<div className="sl-row" key={s.l}>
-          <label>{s.l}</label>
-          <input type="range" min={s.min} max={s.max} value={s.v} onChange={e => s.set(Number(e.target.value))}/>
-          <div className="sl-val" style={{color:s.v===0?"var(--text)":((s.v>0)!==s.inv)?"var(--green)":"var(--red)"}}>{s.v>0?"+":""}{s.v}%</div>
-        </div>))}
+        <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Modifiez le tarif horaire ou le forfait roulage pour voir l&apos;impact sur le seuil de rentabilité.</p>
       </div>
-    </div>
-    <div className="sg">
-      <div className="sc"><div className="sc-l">Résultat actuel</div><div className={`sc-v ${current.resultat>=0?"g":"r"}`}>{current.resultat>=0?"+":""}{fmt(current.resultat)}</div></div>
-      <div className="sc hl" style={{borderColor:proj.tRes>=0?"var(--green)":"var(--red)"}}>
-        <div className="sc-l">Résultat projeté</div>
-        <div className={`sc-v ${proj.tRes>=0?"g":"r"}`}>{proj.tRes>=0?"+":""}{fmt(proj.tRes)}</div>
-        <div className="sc-s">Δ {proj.tRes>current.resultat?"+":""}{fmt(proj.tRes-current.resultat)}</div>
-      </div>
-      <div className="sc"><div className="sc-l">Revenus projetés</div><div className="sc-v b">{fmt(proj.tR)}</div></div>
-      <div className="sc"><div className="sc-l">Heures projetées</div><div className="sc-v">{fH(proj.tH)}</div></div>
-    </div>
-    <div className="card">
-      <div className="card-h"><h2>Détail par avion</h2></div>
       <div className="tw"><table>
-        <thead><tr><th>Avion</th><th>Heures</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>vs Actuel</th></tr></thead>
-        <tbody>{proj.items.map(({ac,heures,rev,dep,res,delta}) => (<tr key={ac.id}>
-          <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
-          <td className="num">{fH(heures)}</td><td className="num" style={{color:"var(--accent)"}}>{fmt(rev)}</td>
-          <td className="num">{fmt(dep)}</td><td className={res>=0?"pos":"neg"}>{res>=0?"+":""}{fmt(res)}</td>
-          <td style={{color:delta>=0?"var(--green)":"var(--red)",fontWeight:600}}>{delta>=0?"+":""}{fmt(delta)}</td>
-        </tr>))}</tbody>
+        <thead><tr><th>Avion</th><th>Tarif actuel</th><th>Tarif simulé</th><th>Forfait actuel</th><th>Forfait simulé</th><th>Seuil (h)</th><th>Heures actuelles</th><th>Excédent</th><th>Statut</th></tr></thead>
+        <tbody>{data.aircraft.map(ac => {
+          const cur = aggAC(data, ac.id, year, ALL12);
+          const curTarif = getRate(data.rates, ac.id, "tarifHeure", year, lm);
+          const curForfait = getRate(data.rates, ac.id, "forfaitRoulage", year, lm);
+          const simTarif = beOverrides[ac.id]?.tarif !== undefined ? beOverrides[ac.id].tarif : curTarif;
+          const simForfait = beOverrides[ac.id]?.forfait !== undefined ? beOverrides[ac.id].forfait : curForfait;
+          const be = breakEvenHours(data, ac.id, year, ALL12, simTarif, simForfait);
+          const beOk = be !== Infinity;
+          const margin = cur.heures - be;
+          const pct = beOk && be > 0 ? cur.heures / be : 0;
+          const status = pct >= 1 ? "tag-g" : pct >= 0.7 ? "tag-o" : "tag-r";
+          const statusTxt = pct >= 1 ? "ATTEINT" : pct >= 0.7 ? "PROCHE" : "INSUFFISANT";
+          return (<tr key={ac.id}>
+            <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
+            <td className="num">{fmt2(curTarif)}</td>
+            <td><input type="number" step="1" value={simTarif} onChange={e => setBeOverrides(p=>({...p,[ac.id]:{...(p[ac.id]||{}),tarif:pf(e.target.value)}}))} style={{width:90,padding:"6px 10px",border:`1px solid ${simTarif!==curTarif?"var(--accent)":"var(--border)"}`,borderRadius:6,fontSize:14,fontFamily:"inherit",outline:"none",background:simTarif!==curTarif?"var(--accent-s)":"var(--bg)"}}/></td>
+            <td className="num">{fmt2(curForfait)}</td>
+            <td><input type="number" step="0.5" value={simForfait} onChange={e => setBeOverrides(p=>({...p,[ac.id]:{...(p[ac.id]||{}),forfait:pf(e.target.value)}}))} style={{width:80,padding:"6px 10px",border:`1px solid ${simForfait!==curForfait?"var(--accent)":"var(--border)"}`,borderRadius:6,fontSize:14,fontFamily:"inherit",outline:"none",background:simForfait!==curForfait?"var(--accent-s)":"var(--bg)"}}/></td>
+            <td className="num" style={{fontWeight:700}}>{beOk ? fH(be) : "∞"}</td>
+            <td className="num">{fH(cur.heures)}</td>
+            <td className={margin>=0?"pos":"neg"}>{beOk ? (margin>=0?"+":"") + fH(margin) : "—"}</td>
+            <td><span className={`tag ${status}`}>{statusTxt}</span></td>
+          </tr>);
+        })}</tbody>
       </table></div>
+    </div>);
+  };
+
+  // ── MODE: Sensitivity ──
+  const SensitivityMode = () => {
+    const ac = data.aircraft.find(a => a.id === sensAc);
+    if (!ac) return null;
+    const allFields = RATE_GROUPS.flatMap(g => g.fields);
+    const curVal = getRate(data.rates, sensAc, sensField, year, lm);
+    const steps = [];
+    for (let i = -3; i <= 3; i++) {
+      const v = curVal * (1 + i * 0.1);
+      if (v >= 0) steps.push(Math.round(v * 100) / 100);
+    }
+    const results = sensitivityAnalysis(data, sensAc, year, ALL12, sensField, steps);
+    const curRes = aggAC(data, sensAc, year, ALL12);
+    const maxAbsRes = Math.max(1, ...results.map(r => Math.abs(r.resultat)));
+
+    return (<>
+      <div className="card">
+        <div className="card-h"><h2>Analyse de sensibilité</h2></div>
+        <div className="card-b">
+          <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Choisissez un avion et un paramètre pour voir comment le résultat varie.</p>
+          <div className="fg" style={{marginBottom:16}}>
+            <div className="fi"><label>Avion</label><select value={sensAc} onChange={e => setSensAc(e.target.value)}>{data.aircraft.map(a => <option key={a.id} value={a.id}>{a.immat} — {a.type}</option>)}</select></div>
+            <div className="fi"><label>Paramètre</label><select value={sensField} onChange={e => setSensField(e.target.value)}>{allFields.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}</select></div>
+          </div>
+          {/* Sensitivity bar chart */}
+          <div className="sens-chart">{results.map((r,i) => {
+            const h = Math.max(6, (Math.abs(r.resultat) / maxAbsRes) * 140);
+            const isCur = Math.abs(r.value - curVal) < 0.01;
+            return (<div className="sens-col" key={i}>
+              <div className="sens-val">{fmt(r.resultat)}</div>
+              <div className={`sens-b ${isCur?"sens-cur":""}`} style={{height:h,background:r.resultat>=0?"var(--green)":"var(--red)",opacity:isCur?1:.7}}/>
+              <div className="sens-lbl">{r.value}</div>
+            </div>);
+          })}</div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-h"><h2>Détail</h2></div>
+        <div className="tw"><table>
+          <thead><tr><th>Valeur</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>Delta</th></tr></thead>
+          <tbody>{results.map((r,i) => {
+            const d = r.resultat - curRes.resultat;
+            const isCur = Math.abs(r.value - curVal) < 0.01;
+            return (<tr key={i} style={isCur?{background:"var(--accent-s)"}:{}}>
+              <td className="num" style={{fontWeight:isCur?700:500}}>{r.value}{isCur?" ●":""}</td>
+              <td className="num" style={{color:"var(--accent)"}}>{fmt(r.revenus || r.revenu)}</td>
+              <td className="num">{fmt(r.depenses)}</td>
+              <td className={r.resultat>=0?"pos":"neg"}>{r.resultat>=0?"+":""}{fmt(r.resultat)}</td>
+              <td>{!isCur && <span className={`delta ${d>=0?"delta-up":"delta-dn"}`}>{d>=0?"+":""}{fmt(d)}</span>}</td>
+            </tr>);
+          })}</tbody>
+        </table></div>
+      </div>
+    </>);
+  };
+
+  // ── MODE: Fleet what-if ──
+  const FleetMode = () => {
+    const toggleAc = (acId) => {
+      setExcludedAc(prev => { const n = new Set(prev); if (n.has(acId)) n.delete(acId); else n.add(acId); return n; });
+    };
+    const activeAc = data.aircraft.filter(a => !excludedAc.has(a.id));
+    let simTotal = { revenu:0, depenses:0, resultat:0, heures:0 };
+    activeAc.forEach(ac => {
+      const a = aggAC(data, ac.id, year, ALL12);
+      simTotal.revenu += a.revenu; simTotal.depenses += a.depenses;
+      simTotal.resultat += a.resultat; simTotal.heures += a.heures;
+    });
+
+    return (<>
+      <div className="card">
+        <div className="card-h"><h2>Simulation de flotte</h2></div>
+        <div className="card-b">
+          <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Décochez un avion pour simuler son retrait de la flotte et voir l&apos;impact financier.</p>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {data.aircraft.map(ac => {
+              const f = aggAC(data, ac.id, year, ALL12);
+              const active = !excludedAc.has(ac.id);
+              return (<div key={ac.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:10,background:active?"var(--bg)":"var(--red-s)",border:`1px solid ${active?"var(--border)":"var(--red)"}`,cursor:"pointer",transition:".15s"}} onClick={() => toggleAc(ac.id)}>
+                <input type="checkbox" checked={active} readOnly style={{accentColor:"var(--accent)",width:18,height:18}}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14,color:active?"var(--accent)":"var(--red)"}}>{ac.immat} <span style={{fontWeight:400,color:"var(--text2)"}}>{ac.type}</span></div>
+                  <div style={{fontSize:12,color:"var(--text3)"}}>{fH(f.heures)} · {f.rotations} vols · Résultat : <span style={{color:f.resultat>=0?"var(--green)":"var(--red)",fontWeight:600}}>{f.resultat>=0?"+":""}{fmt(f.resultat)}</span></div>
+                </div>
+              </div>);
+            })}
+          </div>
+        </div>
+      </div>
+      <div className="sg">
+        <div className="sc"><div className="sc-l">Flotte actuelle ({data.aircraft.length} avions)</div><div className={`sc-v ${current.resultat>=0?"g":"r"}`}>{current.resultat>=0?"+":""}{fmt(current.resultat)}</div><div className="sc-s">{fH(current.heures)} · Rev {fmt(current.revenu)}</div></div>
+        <div className="sc hl" style={{borderColor:simTotal.resultat>=0?"var(--green)":"var(--red)"}}>
+          <div className="sc-l">Flotte simulée ({activeAc.length} avions)</div>
+          <div className={`sc-v ${simTotal.resultat>=0?"g":"r"}`}>{simTotal.resultat>=0?"+":""}{fmt(simTotal.resultat)}</div>
+          <div className="sc-s">{fH(simTotal.heures)} · Rev {fmt(simTotal.revenu)}</div>
+        </div>
+        <div className="sc">
+          <div className="sc-l">DELTA</div>
+          <div className={`sc-v ${simTotal.resultat-current.resultat>=0?"g":"r"}`}>{simTotal.resultat-current.resultat>=0?"+":""}{fmt(simTotal.resultat-current.resultat)}</div>
+          <div className="sc-s">{excludedAc.size > 0 ? `${excludedAc.size} avion(s) retiré(s)` : "Aucun changement"}</div>
+        </div>
+      </div>
+      {excludedAc.size > 0 && <div className="card">
+        <div className="card-h"><h2>Avions retirés — Économies détaillées</h2></div>
+        <div className="tw"><table>
+          <thead><tr><th>Avion</th><th>Revenus perdus</th><th>Dépenses économisées</th><th>Impact net</th></tr></thead>
+          <tbody>{data.aircraft.filter(a => excludedAc.has(a.id)).map(ac => {
+            const f = aggAC(data, ac.id, year, ALL12);
+            return (<tr key={ac.id}>
+              <td className="tx" style={{color:"var(--red)",fontWeight:700}}>{ac.immat}</td>
+              <td className="num" style={{color:"var(--red)"}}>-{fmt(f.revenu)}</td>
+              <td className="num" style={{color:"var(--green)"}}>+{fmt(f.depenses)}</td>
+              <td className={f.resultat<=0?"pos":"neg"}>{f.resultat<=0?"+":""}{fmt(-f.resultat)}</td>
+            </tr>);
+          })}</tbody>
+        </table></div>
+      </div>}
+    </>);
+  };
+
+  return (<div>
+    <div className="chips" style={{marginBottom:20}}>
+      {modes.map(m => <button key={m.id} className={`chip ${mode===m.id?"on":""}`} onClick={() => setMode(m.id)}>{m.l}</button>)}
     </div>
+    {mode === "global" && <GlobalMode />}
+    {mode === "aircraft" && <AircraftMode />}
+    {mode === "breakeven" && <BreakevenMode />}
+    {mode === "sensitivity" && <SensitivityMode />}
+    {mode === "fleet" && <FleetMode />}
   </div>);
 }
 
