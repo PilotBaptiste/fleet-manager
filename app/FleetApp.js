@@ -276,19 +276,17 @@ function Activity({ data, db, year }) {
           <th>Mois</th>
           <th style={{color:"var(--accent)"}}>H. CdB</th><th style={{color:"var(--accent)"}}>Vols CdB</th>
           <th style={{color:"var(--orange)"}}>H. DC</th><th style={{color:"var(--orange)"}}>Vols DC</th>
-          <th>Tarif CdB</th><th>Tarif DC</th><th>Roulage</th>
+          <th>Tarif (€/h)</th><th>Roulage</th>
           <th>Rev. CdB</th><th>Rev. DC</th><th>Rev. roulage</th><th>Total</th>
         </tr></thead>
         <tbody>{MOS.map((m,i) => {
           const act = getActivity(data,acId,year,i);
-          const tarifCdb = getRate(data.rates,acId,"tarifHeure",year,i);
-          const tarifDc = getRate(data.rates,acId,"tarifHeureDC",year,i) || tarifCdb;
+          const tarif = getRate(data.rates,acId,"tarifHeure",year,i);
           const forfaitMin = getRate(data.rates,acId,"forfaitRoulage",year,i);
-          const fEurCdb = (forfaitMin/60)*tarifCdb;
-          const fEurDc = (forfaitMin/60)*tarifDc;
-          const revCdb = (act.heures||0)*tarifCdb + (act.rotations||0)*fEurCdb;
-          const revDc = (act.heuresDc||0)*tarifDc + (act.rotationsDc||0)*fEurDc;
-          const revRoulage = (act.rotations||0)*fEurCdb + (act.rotationsDc||0)*fEurDc;
+          const fEur = (forfaitMin/60)*tarif;
+          const revCdb = (act.heures||0)*tarif + (act.rotations||0)*fEur;
+          const revDc = (act.heuresDc||0)*tarif + (act.rotationsDc||0)*fEur;
+          const revRoulage = ((act.rotations||0)+(act.rotationsDc||0))*fEur;
           const total = revCdb + revDc;
           return (<tr key={i}>
             <td className="tx" style={{fontWeight:600}}>{m}</td>
@@ -296,8 +294,7 @@ function Activity({ data, db, year }) {
             <td><input type="number" step="1" min="0" value={act.rotations||""} placeholder="0" onChange={e=>upd(i,act,"rotations",e.target.value)} style={{...inpSt,width:60}}/></td>
             <td><input type="number" step="0.1" min="0" value={act.heuresDc||""} placeholder="0" onChange={e=>upd(i,act,"heuresDc",e.target.value)} style={{...inpSt,width:75,borderColor:"var(--orange-s)"}}/></td>
             <td><input type="number" step="1" min="0" value={act.rotationsDc||""} placeholder="0" onChange={e=>upd(i,act,"rotationsDc",e.target.value)} style={{...inpSt,width:60,borderColor:"var(--orange-s)"}}/></td>
-            <td className="num" style={{color:"var(--text3)",fontSize:12}}>{tarifCdb>0?fmt2(tarifCdb):"—"}</td>
-            <td className="num" style={{color:"var(--text3)",fontSize:12}}>{tarifDc>0?fmt2(tarifDc):"—"}</td>
+            <td className="num" style={{color:"var(--text3)",fontSize:12}}>{tarif>0?fmt2(tarif):"—"}</td>
             <td className="num" style={{color:"var(--text3)",fontSize:12}}>{forfaitMin>0?forfaitMin+"min":"—"}</td>
             <td className="num" style={{color:"var(--accent)"}}>{revCdb>0?fmt(revCdb):"—"}</td>
             <td className="num" style={{color:"var(--orange)"}}>{revDc>0?fmt(revDc):"—"}</td>
@@ -710,33 +707,31 @@ function Simulation({ data, year }) {
     return (<div className="card">
       <div className="card-h"><h2>Seuil de rentabilité interactif <span className="badge">{year}</span></h2></div>
       <div className="card-b">
-        <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Modifiez les tarifs CdB, DC ou le forfait roulage pour voir l&apos;impact sur le seuil de rentabilité.</p>
+        <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Modifiez le tarif horaire ou le forfait roulage pour voir l&apos;impact sur le seuil de rentabilité. La DC est au même tarif.</p>
       </div>
       <div className="tw"><table>
-        <thead><tr><th>Avion</th><th>CdB actuel</th><th>CdB simulé</th><th>DC actuel</th><th>DC simulé</th><th>Roulage</th><th>Roulage sim.</th><th>Seuil (h)</th><th>H. actuelles</th><th>Excédent</th><th>Statut</th></tr></thead>
+        <thead><tr><th>Avion</th><th>Tarif actuel</th><th>Tarif simulé</th><th>Roulage</th><th>Roulage sim.</th><th>Roulage (€/vol)</th><th>Seuil (h)</th><th>H. actuelles</th><th>Excédent</th><th>Statut</th></tr></thead>
         <tbody>{data.aircraft.map(ac => {
           const cur = aggAC(data, ac.id, year, ALL12);
-          const curTarifCdb = getRate(data.rates, ac.id, "tarifHeure", year, lm);
-          const curTarifDc = getRate(data.rates, ac.id, "tarifHeureDC", year, lm) || curTarifCdb;
+          const curTarif = getRate(data.rates, ac.id, "tarifHeure", year, lm);
           const curForfaitMin = getRate(data.rates, ac.id, "forfaitRoulage", year, lm);
-          const simTarifCdb = beOverrides[ac.id]?.tarifCdb !== undefined ? beOverrides[ac.id].tarifCdb : curTarifCdb;
-          const simTarifDc = beOverrides[ac.id]?.tarifDc !== undefined ? beOverrides[ac.id].tarifDc : curTarifDc;
+          const simTarif = beOverrides[ac.id]?.tarif !== undefined ? beOverrides[ac.id].tarif : curTarif;
           const simForfaitMin = beOverrides[ac.id]?.forfait !== undefined ? beOverrides[ac.id].forfait : curForfaitMin;
-          const be = breakEvenHours(data, ac.id, year, ALL12, simTarifCdb, simTarifDc, simForfaitMin);
+          const simForfaitEur = (simForfaitMin / 60) * simTarif;
+          const be = breakEvenHours(data, ac.id, year, ALL12, simTarif, simForfaitMin);
           const beOk = be !== Infinity;
           const margin = cur.heures - be;
           const pct = beOk && be > 0 ? cur.heures / be : 0;
           const status = pct >= 1 ? "tag-g" : pct >= 0.7 ? "tag-o" : "tag-r";
           const statusTxt = pct >= 1 ? "ATTEINT" : pct >= 0.7 ? "PROCHE" : "INSUFFISANT";
-          const inpSt = (cur,sim) => ({width:80,padding:"6px 10px",border:`1px solid ${sim!==cur?"var(--accent)":"var(--border)"}`,borderRadius:6,fontSize:14,fontFamily:"inherit",outline:"none",background:sim!==cur?"var(--accent-s)":"var(--bg)"});
+          const inpSt = (c,s) => ({width:80,padding:"6px 10px",border:`1px solid ${s!==c?"var(--accent)":"var(--border)"}`,borderRadius:6,fontSize:14,fontFamily:"inherit",outline:"none",background:s!==c?"var(--accent-s)":"var(--bg)"});
           return (<tr key={ac.id}>
             <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
-            <td className="num">{fmt2(curTarifCdb)}</td>
-            <td><input type="number" step="1" value={simTarifCdb} onChange={e => setBeOverrides(p=>({...p,[ac.id]:{...(p[ac.id]||{}),tarifCdb:pf(e.target.value)}}))} style={inpSt(curTarifCdb,simTarifCdb)}/></td>
-            <td className="num">{fmt2(curTarifDc)}</td>
-            <td><input type="number" step="1" value={simTarifDc} onChange={e => setBeOverrides(p=>({...p,[ac.id]:{...(p[ac.id]||{}),tarifDc:pf(e.target.value)}}))} style={inpSt(curTarifDc,simTarifDc)}/></td>
+            <td className="num">{fmt2(curTarif)}</td>
+            <td><input type="number" step="1" value={simTarif} onChange={e => setBeOverrides(p=>({...p,[ac.id]:{...(p[ac.id]||{}),tarif:pf(e.target.value)}}))} style={inpSt(curTarif,simTarif)}/></td>
             <td className="num">{curForfaitMin} min</td>
             <td><input type="number" step="1" value={simForfaitMin} onChange={e => setBeOverrides(p=>({...p,[ac.id]:{...(p[ac.id]||{}),forfait:pf(e.target.value)}}))} style={inpSt(curForfaitMin,simForfaitMin)}/></td>
+            <td className="num" style={{color:"var(--purple)"}}>{fmt2(simForfaitEur)}</td>
             <td className="num" style={{fontWeight:700}}>{beOk ? fH(be) : "∞"}</td>
             <td className="num">{fH(cur.heures)}</td>
             <td className={margin>=0?"pos":"neg"}>{beOk ? (margin>=0?"+":"") + fH(margin) : "—"}</td>
