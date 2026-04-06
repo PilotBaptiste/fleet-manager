@@ -253,15 +253,31 @@ function BarChart({ data, year }) {
 }
 
 // ════════ ACTIVITY ════════
+function HMInput({ value, onChange, style, placeholder }) {
+  const [raw, setRaw] = useState(value ? decimalToHM(value) : "");
+  const prev = value ? decimalToHM(value) : "";
+  // Sync from outside only if value changed externally
+  const [lastSaved, setLastSaved] = useState(prev);
+  if (prev !== lastSaved && prev !== decimalToHM(hmToDecimal(raw))) { setRaw(prev); setLastSaved(prev); }
+  const commit = () => {
+    const dec = hmToDecimal(raw);
+    const formatted = dec > 0 ? decimalToHM(dec) : "";
+    setRaw(formatted);
+    setLastSaved(formatted);
+    onChange(dec);
+  };
+  return <input type="text" placeholder={placeholder||"0:00"} value={raw} onChange={e=>setRaw(e.target.value)} onBlur={commit} onKeyDown={e=>{if(e.key==="Enter")commit();}} style={style}/>;
+}
+
 function Activity({ data, db, year }) {
   const [acId, setAcId] = useState(data.aircraft[0]?.id || null);
   const inpSt = {padding:"6px 10px",border:"1px solid var(--border)",borderRadius:6,fontSize:14,fontFamily:"inherit",outline:"none",background:"var(--bg)"};
   if (!data.aircraft.length) return <div className="card"><div className="empty">Ajoutez des avions dans Flotte.</div></div>;
 
-  const upd = (i, act, field, val) => {
-    const h = field==="heures"?hmToDecimal(val):(act.heures||0);
+  const save = (i, act, field, val) => {
+    const h = field==="heures"?val:(act.heures||0);
     const r = field==="rotations"?pf(val):(act.rotations||0);
-    const hd = field==="heuresDc"?hmToDecimal(val):(act.heuresDc||0);
+    const hd = field==="heuresDc"?val:(act.heuresDc||0);
     db.setMonthly(acId,year,i,h,r,hd);
   };
 
@@ -270,6 +286,7 @@ function Activity({ data, db, year }) {
     <div className="chips">{data.aircraft.map(a => <button key={a.id} className={`chip ${acId===a.id?"on":""}`} onClick={() => setAcId(a.id)}>{a.immat} — {a.type}</button>)}</div>
     <div className="card">
       <div className="card-h"><h2>Activité {year} <span className="badge">{data.aircraft.find(a=>a.id===acId)?.immat}</span></h2></div>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Heures au format H:MM (ex: 2:30 = 2h30). Validez avec Tab ou Entrée.</p>
       <div className="tw"><table>
         <thead><tr>
           <th>Mois</th>
@@ -288,11 +305,11 @@ function Activity({ data, db, year }) {
           const revDc = (act.heuresDc||0)*tarif;
           const revRoulage = (act.rotations||0)*fEur;
           const total = revCdb + revDc + revRoulage;
-          return (<tr key={i}>
+          return (<tr key={`${acId}-${i}`}>
             <td className="tx" style={{fontWeight:600}}>{m}</td>
-            <td><input type="text" placeholder="0:00" value={act.heures?decimalToHM(act.heures):""} onChange={e=>upd(i,act,"heures",e.target.value)} style={{...inpSt,width:70}} onBlur={e=>{const v=hmToDecimal(e.target.value);if(v)e.target.value=decimalToHM(v);}}/></td>
-            <td><input type="text" placeholder="0:00" value={act.heuresDc?decimalToHM(act.heuresDc):""} onChange={e=>upd(i,act,"heuresDc",e.target.value)} style={{...inpSt,width:70,borderColor:"var(--orange-s)"}} onBlur={e=>{const v=hmToDecimal(e.target.value);if(v)e.target.value=decimalToHM(v);}}/></td>
-            <td><input type="number" step="1" min="0" value={act.rotations||""} placeholder="0" onChange={e=>upd(i,act,"rotations",e.target.value)} style={{...inpSt,width:55}}/></td>
+            <td><HMInput value={act.heures} onChange={v=>save(i,act,"heures",v)} style={{...inpSt,width:70}}/></td>
+            <td><HMInput value={act.heuresDc} onChange={v=>save(i,act,"heuresDc",v)} style={{...inpSt,width:70,borderColor:"var(--orange-s)"}}/></td>
+            <td><input type="number" step="1" min="0" value={act.rotations||""} placeholder="0" onChange={e=>save(i,act,"rotations",e.target.value)} style={{...inpSt,width:55}}/></td>
             <td className="num" style={{color:"var(--text3)",fontSize:12}}>{tarif>0?fmt2(tarif):"—"}</td>
             <td className="num" style={{color:"var(--text3)",fontSize:12}}>{forfaitMin>0?forfaitMin+"min":"—"}</td>
             <td className="num" style={{color:"var(--accent)"}}>{revCdb>0?fmt(revCdb):"—"}</td>
