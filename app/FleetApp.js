@@ -2,6 +2,7 @@
 import { useState, useMemo } from "react";
 import { useFleetData } from "../lib/useFleetData";
 import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, revenuePerHour, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis } from "../lib/calc";
+import { parseFlightCSV, aggregateFlights } from "../lib/csvImport";
 
 export default function FleetApp({ onLogout }) {
   const db = useFleetData();
@@ -19,6 +20,7 @@ export default function FleetApp({ onLogout }) {
     { id:"ops", l:"Opérations" },
     { id:"loans", l:"Prêts" },
     { id:"sim", l:"Simulation" },
+    { id:"import", l:"Import CSV" },
     { id:"fleet", l:"Flotte" },
   ];
 
@@ -51,6 +53,7 @@ export default function FleetApp({ onLogout }) {
       {tab === "ops" && <Ops data={data} db={db} year={year} modal={modal} setModal={setModal} />}
       {tab === "loans" && <LoansTab data={data} db={db} modal={modal} setModal={setModal} />}
       {tab === "sim" && <Simulation data={data} year={year} />}
+      {tab === "import" && <ImportCSV data={data} db={db} />}
       {tab === "fleet" && <Fleet data={data} db={db} modal={modal} setModal={setModal} />}
     </div>
   );
@@ -917,6 +920,167 @@ function Simulation({ data, year }) {
     {mode === "breakeven" && <BreakevenMode />}
     {mode === "sensitivity" && <SensitivityMode />}
     {mode === "fleet" && <FleetMode />}
+  </div>);
+}
+
+// ════════ IMPORT CSV ════════
+function ImportCSV({ data, db }) {
+  const [step, setStep] = useState("upload"); // upload | preview | done
+  const [parsed, setParsed] = useState(null);
+  const [agg, setAgg] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      const p = parseFlightCSV(text);
+      setParsed(p);
+      if (!p.error && p.flights.length > 0) {
+        const a = aggregateFlights(p.flights, data.aircraft);
+        setAgg(a);
+        setStep("preview");
+      }
+    };
+    reader.readAsText(file, "UTF-8");
+  };
+
+  const doImport = async () => {
+    if (!agg) return;
+    setImporting(true);
+    let imported = 0, skipped = 0;
+    const immatMap = {};
+    data.aircraft.forEach(ac => { immatMap[ac.immat.toUpperCase().replace(/\s/g, "")] = ac.id; });
+
+    // Create missing aircraft first
+    for (const immat of agg.unknownImmats) {
+      const ac = await db.addAircraft(immat, "—");
+      if (ac) immatMap[immat] = ac.id;
+    }
+
+    // Import monthly data
+    for (const row of agg.monthly) {
+      const acId = immatMap[row.immat];
+      if (!acId) { skipped++; continue; }
+      await db.setMonthly(acId, row.year, row.month, row.heures, row.rotations, row.heuresDc);
+      imported++;
+    }
+
+    setResult({ imported, skipped, newAircraft: agg.unknownImmats.length });
+    setImporting(false);
+    setStep("done");
+    db.reload();
+  };
+
+  const reset = () => { setStep("upload"); setParsed(null); setAgg(null); setResult(null); };
+
+  return (<div>
+    {/* ── Step 1: Upload ── */}
+    {step === "upload" && (
+      <div className="card">
+        <div className="card-h"><h2>Import CSV Aerogest</h2></div>
+        <div className="card-b">
+          <p style={{fontSize:13,color:"var(--text2)",marginBottom:16,lineHeight:1.8}}>
+            Importez l&apos;export CSV d&apos;Aerogest avec les vols depuis janvier 2022.<br/>
+            Colonnes attendues : Date, Immatriculation, Durée en min, Mode (DC/CDB), etc.<br/>
+            Les données seront agrégées par avion et par mois automatiquement.
+          </p>
+          <div style={{border:"2px dashed var(--border)",borderRadius:12,padding:40,textAlign:"center",background:"var(--bg)"}}>
+            <input type="file" accept=".csv,.txt" onChange={handleFile} style={{fontSize:14,fontFamily:"inherit"}}/>
+          </div>
+          {parsed?.error && <div style={{color:"var(--red)",marginTop:16,fontSize:13,fontWeight:600}}>{parsed.error}</div>}
+        </div>
+      </div>
+    )}
+
+    {/* ── Step 2: Preview ── */}
+    {step === "preview" && agg && (
+      <div>
+        {/* Stats */}
+        <div className="sg">
+          <div className="sc"><div className="sc-l">VOLS IMPORTÉS</div><div className="sc-v b">{agg.stats.totalFlights}</div></div>
+          <div className="sc"><div className="sc-l">HEURES TOTALES</div><div className="sc-v">{fH(agg.stats.totalHours)}</div><div className="sc-s">CdB {fH(agg.stats.hoursCdb)} · DC {fH(agg.stats.hoursDc)}</div></div>
+          <div className="sc"><div className="sc-l">MOUVEMENTS</div><div className="sc-v">{agg.stats.totalRotations}</div></div>
+          {agg.stats.totalMontant > 0 && <div className="sc"><div className="sc-l">MONTANT TOTAL</div><div className="sc-v b">{fmt(agg.stats.totalMontant)}</div></div>}
+          {agg.stats.totalCarbu > 0 && <div className="sc"><div className="sc-l">CARBURANT</div><div className="sc-v o">{Math.round(agg.stats.totalCarbu)} L</div></div>}
+        </div>
+
+        {agg.stats.dateRange.min && (
+          <div style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>
+            Période : {agg.stats.dateRange.min.toLocaleDateString("fr-FR")} → {agg.stats.dateRange.max.toLocaleDateString("fr-FR")}
+          </div>
+        )}
+
+        {/* Unknown aircraft */}
+        {agg.unknownImmats.length > 0 && (
+          <div className="card" style={{borderColor:"var(--orange)"}}>
+            <div className="card-h"><h2 style={{color:"var(--orange)"}}>Avions non trouvés ({agg.unknownImmats.length})</h2></div>
+            <div className="card-b">
+              <p style={{fontSize:13,color:"var(--text2)",marginBottom:10}}>Ces immatriculations seront créées automatiquement :</p>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {agg.unknownImmats.map(im => <span key={im} className="tag tag-o">{im}</span>)}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Warnings */}
+        {parsed.warnings.length > 0 && (
+          <div className="card">
+            <div className="card-h"><h2>Avertissements ({parsed.warnings.length})</h2></div>
+            <div className="card-b" style={{maxHeight:200,overflowY:"auto"}}>
+              {parsed.warnings.slice(0, 50).map((w, i) => <div key={i} style={{fontSize:12,color:"var(--text3)",padding:"3px 0"}}>{w}</div>)}
+              {parsed.warnings.length > 50 && <div style={{fontSize:12,color:"var(--text3)",fontWeight:600}}>… et {parsed.warnings.length - 50} autres</div>}
+            </div>
+          </div>
+        )}
+
+        {/* Monthly preview table */}
+        <div className="card">
+          <div className="card-h"><h2>Aperçu par avion / mois ({agg.monthly.length} lignes)</h2></div>
+          <div className="tw" style={{maxHeight:400,overflowY:"auto"}}><table>
+            <thead><tr><th>Avion</th><th>Mois</th><th>H. CdB</th><th>H. DC</th><th>Total</th><th>Mvts</th><th>Carbu (L)</th><th>Montant</th></tr></thead>
+            <tbody>{agg.monthly.map((r, i) => (
+              <tr key={i}>
+                <td className="tx" style={{color: data.aircraft.some(a=>a.immat.toUpperCase().replace(/\s/g,"")===r.immat) ? "var(--accent)" : "var(--orange)", fontWeight:700}}>{r.immat}</td>
+                <td className="tx">{MOS[r.month]} {r.year}</td>
+                <td className="num">{fH(r.heures)}</td>
+                <td className="num" style={{color:"var(--orange)"}}>{fH(r.heuresDc)}</td>
+                <td className="num" style={{fontWeight:600}}>{fH(r.heures + r.heuresDc)}</td>
+                <td className="num">{r.rotations}</td>
+                <td className="num">{r.carbu > 0 ? Math.round(r.carbu) + " L" : "—"}</td>
+                <td className="num">{r.montant > 0 ? fmt(r.montant) : "—"}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        </div>
+
+        {/* Actions */}
+        <div style={{display:"flex",gap:12,justifyContent:"flex-end",marginTop:8}}>
+          <button className="btn" onClick={reset}>Annuler</button>
+          <button className="btn btn-p" onClick={doImport} disabled={importing}>
+            {importing ? "Import en cours…" : `Importer ${agg.monthly.length} mois d'activité`}
+          </button>
+        </div>
+      </div>
+    )}
+
+    {/* ── Step 3: Done ── */}
+    {step === "done" && result && (
+      <div className="card">
+        <div className="card-h"><h2 style={{color:"var(--green)"}}>Import terminé</h2></div>
+        <div className="card-b" style={{textAlign:"center",padding:40}}>
+          <div style={{fontSize:48,marginBottom:12}}>✓</div>
+          <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>{result.imported} mois importés</div>
+          {result.newAircraft > 0 && <div style={{fontSize:13,color:"var(--orange)",marginBottom:4}}>{result.newAircraft} avion(s) créé(s)</div>}
+          {result.skipped > 0 && <div style={{fontSize:13,color:"var(--text3)"}}>{result.skipped} ignoré(s)</div>}
+          <button className="btn btn-p" onClick={reset} style={{marginTop:20}}>Nouvel import</button>
+        </div>
+      </div>
+    )}
   </div>);
 }
 
