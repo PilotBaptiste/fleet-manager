@@ -20,6 +20,7 @@ CREATE TABLE rates (
   value NUMERIC NOT NULL DEFAULT 0,
   from_year INT NOT NULL,
   from_month INT NOT NULL,     -- 0-11
+  from_day INT NOT NULL DEFAULT 1, -- 1-31
   created_at TIMESTAMPTZ DEFAULT now()
 );
 

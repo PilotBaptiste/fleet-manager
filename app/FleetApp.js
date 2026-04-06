@@ -329,13 +329,16 @@ function Activity({ data, db, year }) {
 // ════════ RATES ════════
 function Rates({ data, db, modal, setModal }) {
   const [acId, setAcId] = useState(data.aircraft[0]?.id || null);
-  const [form, setForm] = useState({ field:"", value:"", fromYear:new Date().getFullYear(), fromMonth:new Date().getMonth(), global:false });
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
+  const [form, setForm] = useState({ field:"", value:"", fromDate:todayStr, global:false });
 
-  const openAdd = (fieldKey, isGlobal) => { setForm({field:fieldKey,value:"",fromYear:new Date().getFullYear(),fromMonth:new Date().getMonth(),global:isGlobal}); setModal("rate"); };
+  const openAdd = (fieldKey, isGlobal) => { setForm({field:fieldKey,value:"",fromDate:todayStr,global:isGlobal}); setModal("rate"); };
   const save = async () => {
     if (!form.field) return;
-    if (form.global) { await db.addGlobalRate(form.field, pf(form.value), parseInt(form.fromYear), parseInt(form.fromMonth)); }
-    else { if (!acId) return; await db.addRate(acId, form.field, pf(form.value), parseInt(form.fromYear), parseInt(form.fromMonth)); }
+    const [fy,fm,fd] = form.fromDate.split("-").map(Number);
+    if (form.global) { await db.addGlobalRate(form.field, pf(form.value), fy, fm-1, fd); }
+    else { if (!acId) return; await db.addRate(acId, form.field, pf(form.value), fy, fm-1, fd); }
     setModal(null);
   };
 
@@ -348,7 +351,7 @@ function Rates({ data, db, modal, setModal }) {
       <div className="card-b">
         <p style={{fontSize:12,color:"var(--text3)",marginBottom:14}}>S&apos;applique à tous les avions.</p>
         {GLOBAL_RATE_FIELDS.map(field => {
-          const periods = data.rates.filter(r => r.field===field.key).sort((a,b) => (a.fromYear*12+a.fromMonth) - (b.fromYear*12+b.fromMonth));
+          const periods = data.rates.filter(r => r.field===field.key).sort((a,b) => (a.fromYear*400+a.fromMonth*32+(a.fromDay||1)) - (b.fromYear*400+b.fromMonth*32+(b.fromDay||1)));
           return (<div key={field.key} style={{marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
               <div><span style={{fontSize:13,fontWeight:600}}>{field.label}</span>{field.help && <span style={{fontSize:11,color:"var(--text3)",marginLeft:8}}>{field.help}</span>}</div>
@@ -356,7 +359,7 @@ function Rates({ data, db, modal, setModal }) {
             </div>
             {periods.length === 0 && <div style={{fontSize:13,color:"var(--text3)",padding:"8px 0"}}>Aucune valeur définie</div>}
             {periods.map(p => (<div className="rate-period" key={p.id}>
-              <div className="rp-date">À partir de {MOS[p.fromMonth]} {p.fromYear}</div>
+              <div className="rp-date">À partir du {String(p.fromDay||1).padStart(2,"0")}/{String((p.fromMonth||0)+1).padStart(2,"0")}/{p.fromYear}</div>
               <div className="rp-val">{p.value} min</div>
               <div style={{flex:1}}/>
               <button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteRate(p.id)}>✕</button>
@@ -376,7 +379,7 @@ function Rates({ data, db, modal, setModal }) {
         <div className="card-h"><h2>{group.group}</h2></div>
         <div className="card-b">
           {group.fields.map(field => {
-            const periods = data.rates.filter(r => r.acId===acId && r.field===field.key).sort((a,b) => (a.fromYear*12+a.fromMonth) - (b.fromYear*12+b.fromMonth));
+            const periods = data.rates.filter(r => r.acId===acId && r.field===field.key).sort((a,b) => (a.fromYear*400+a.fromMonth*32+(a.fromDay||1)) - (b.fromYear*400+b.fromMonth*32+(b.fromDay||1)));
             return (<div key={field.key} style={{marginBottom:16}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                 <div><span style={{fontSize:13,fontWeight:600}}>{field.label}</span>{field.help && <span style={{fontSize:11,color:"var(--text3)",marginLeft:8}}>{field.help}</span>}</div>
@@ -384,7 +387,7 @@ function Rates({ data, db, modal, setModal }) {
               </div>
               {periods.length === 0 && <div style={{fontSize:13,color:"var(--text3)",padding:"8px 0"}}>Aucune valeur définie</div>}
               {periods.map(p => (<div className="rate-period" key={p.id}>
-                <div className="rp-date">À partir de {MOS[p.fromMonth]} {p.fromYear}</div>
+                <div className="rp-date">À partir du {String(p.fromDay||1).padStart(2,"0")}/{String((p.fromMonth||0)+1).padStart(2,"0")}/{p.fromYear}</div>
                 <div className="rp-val">{fmt2(p.value)}</div>
                 <div style={{flex:1}}/>
                 <button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteRate(p.id)}>✕</button>
@@ -399,8 +402,7 @@ function Rates({ data, db, modal, setModal }) {
     {modal === "rate" && (<div className="mo" onClick={() => setModal(null)}><div className="mod" onClick={e => e.stopPropagation()}>
       <div className="mod-h"><h3>Nouvelle période {form.global?"(club)":""}</h3><button className="btn btn-s btn-ghost" onClick={() => setModal(null)}>✕</button></div>
       <div className="mod-b"><div className="fg">
-        <div className="fi"><label>Année</label><select value={form.fromYear} onChange={e => setForm(f => ({...f,fromYear:e.target.value}))}>{YEARS.map(y => <option key={y} value={y}>{y}</option>)}</select></div>
-        <div className="fi"><label>Mois</label><select value={form.fromMonth} onChange={e => setForm(f => ({...f,fromMonth:e.target.value}))}>{MO.map((m,i) => <option key={i} value={i}>{m}</option>)}</select></div>
+        <div className="fi"><label>Date d&apos;effet</label><input type="date" value={form.fromDate} onChange={e => setForm(f => ({...f,fromDate:e.target.value}))}/></div>
         <div className="fi"><label>Valeur</label><input type="number" step="0.01" value={form.value} placeholder="0" onChange={e => setForm(f => ({...f,value:e.target.value}))}/></div>
       </div></div>
       <div className="mod-f"><button className="btn" onClick={() => setModal(null)}>Annuler</button><button className="btn btn-p" onClick={save}>Enregistrer</button></div>
@@ -510,10 +512,7 @@ function Simulation({ data, year }) {
   const [selAc, setSelAc] = useState(data.aircraft[0]?.id || null);
   const [overrides, setOverrides] = useState({});
   const [scenarios, setScenarios] = useState([]);
-  const [adjH, setAdjH] = useState(0);
-  const [adjT, setAdjT] = useState(0);
-  const [adjC, setAdjC] = useState(0);
-  const [adjF, setAdjF] = useState(0);
+  const [globOv, setGlobOv] = useState({}); // { acId: { tarifHeure, heures, rotations, ... } }
   const [beOverrides, setBeOverrides] = useState({});
   const [sensAc, setSensAc] = useState(data.aircraft[0]?.id || null);
   const [sensField, setSensField] = useState("tarifHeure");
@@ -536,74 +535,75 @@ function Simulation({ data, year }) {
   if (!data.aircraft.length) return <div className="card"><div className="empty">Ajoutez des données pour simuler.</div></div>;
 
   // ── MODE: Global projection ──
+  const setGOv = (acId, key, val) => {
+    setGlobOv(prev => ({ ...prev, [acId]: { ...(prev[acId] || {}), [key]: val } }));
+  };
+
   const GlobalMode = () => {
-    const proj = (() => {
-      let tR=0, tD=0, tH=0;
-      const items = [];
-      data.aircraft.forEach(ac => {
-        const cur = aggAC(data,ac.id,year,ALL12);
-        const tarif = getRate(data.rates,ac.id,"tarifHeure",year,lm);
-        const forfaitMin = getGlobalRate(data.rates,"forfaitRoulage",year,lm);
-        const pC = getRate(data.rates,ac.id,"prixCarburant",year,lm);
-        const cC = getRate(data.rates,ac.id,"consoCarburant",year,lm);
-        const mH = getRate(data.rates,ac.id,"maintenanceHoraire",year,lm);
-        const newTarif = tarif*(1+adjT/100);
-        const forfaitEur = (forfaitMin/60)*newTarif;
-        const newH = cur.heures*(1+adjH/100);
-        const rev = newH*newTarif + cur.rotations*forfaitEur;
-        const varC = newH*cC*pC*(1+adjC/100) + newH*mH;
-        const dep = cur.fixe*(1+adjF/100) + varC + cur.loan + cur.opsC;
-        const res = rev-dep;
-        items.push({ac,heures:newH,rev,dep,res,delta:res-cur.resultat});
-        tR += rev; tD += dep; tH += newH;
-      });
-      return { items, tR, tD, tRes:tR-tD, tH };
-    })();
+    const items = data.aircraft.map(ac => {
+      const cur = aggAC(data, ac.id, year, ALL12);
+      const ov = globOv[ac.id] || {};
+      const proj = Object.keys(ov).length > 0 ? aggACWithOverrides(data, ac.id, year, ALL12, ov) : cur;
+      return { ac, cur, proj, delta: proj.resultat - cur.resultat };
+    });
+    const totCur = { revenu:0, depenses:0, resultat:0, heures:0 };
+    const totProj = { revenu:0, depenses:0, resultat:0, heures:0 };
+    items.forEach(({ cur, proj }) => {
+      totCur.revenu += cur.revenu; totCur.depenses += cur.depenses; totCur.resultat += cur.resultat; totCur.heures += cur.heures;
+      totProj.revenu += proj.revenu; totProj.depenses += proj.depenses; totProj.resultat += proj.resultat; totProj.heures += proj.heures;
+    });
+    const hasChanges = Object.keys(globOv).some(id => Object.keys(globOv[id]).length > 0);
 
     const saveScenario = () => {
       if (!scenName.trim()) return;
-      setScenarios(prev => [...prev, {name:scenName.trim(),adjH,adjT,adjC,adjF,res:proj.tRes,rev:proj.tR,dep:proj.tD}]);
+      setScenarios(prev => [...prev, { name: scenName.trim(), globOv: JSON.parse(JSON.stringify(globOv)), res: totProj.resultat, rev: totProj.revenu, dep: totProj.depenses, heures: totProj.heures }]);
       setScenName("");
     };
 
+    const inpSt = (cur, sim) => ({ width:85, padding:"6px 8px", border:`1px solid ${sim !== undefined && sim !== cur ? "var(--accent)" : "var(--border)"}`, borderRadius:6, fontSize:13, fontFamily:"inherit", outline:"none", background: sim !== undefined && sim !== cur ? "var(--accent-s)" : "var(--bg)", textAlign:"right" });
+
     return (<>
       <div className="card">
-        <div className="card-h"><h2>Projection globale <span className="badge">base {year}</span></h2><button className="btn btn-s" onClick={() => {setAdjH(0);setAdjT(0);setAdjC(0);setAdjF(0);}}>Réinitialiser</button></div>
+        <div className="card-h"><h2>Projection globale <span className="badge">base {year}</span></h2>{hasChanges && <button className="btn btn-s btn-d" onClick={() => setGlobOv({})}>Réinitialiser</button>}</div>
         <div className="card-b">
-          <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Déplacez les curseurs pour voir l&apos;impact sur le résultat de la flotte.</p>
-          {[
-            {l:"Heures de vol",v:adjH,set:setAdjH,min:-50,max:100,inv:false},
-            {l:"Tarif horaire + roulage",v:adjT,set:setAdjT,min:-30,max:50,inv:false},
-            {l:"Prix carburant",v:adjC,set:setAdjC,min:-30,max:80,inv:true},
-            {l:"Coûts fixes",v:adjF,set:setAdjF,min:-30,max:50,inv:true},
-          ].map(s => (<div className="sl-row" key={s.l}>
-            <label>{s.l}</label>
-            <input type="range" min={s.min} max={s.max} value={s.v} onChange={e => s.set(Number(e.target.value))}/>
-            <div className="sl-val" style={{color:s.v===0?"var(--text)":((s.v>0)!==s.inv)?"var(--green)":"var(--red)"}}>{s.v>0?"+":""}{s.v}%</div>
-          </div>))}
+          <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Modifiez directement les valeurs par avion pour voir l&apos;impact sur le résultat.</p>
+          <div className="tw"><table>
+            <thead><tr><th>Avion</th><th>Tarif (€/h)</th><th>Heures</th><th>Vols</th><th>Carburant (€/L)</th><th>Maint. (€/h)</th><th>Résultat actuel</th><th>Résultat simulé</th><th>Delta</th></tr></thead>
+            <tbody>{items.map(({ ac, cur, proj, delta }) => {
+              const ov = globOv[ac.id] || {};
+              const curTarif = getRate(data.rates, ac.id, "tarifHeure", year, lm);
+              const curPC = getRate(data.rates, ac.id, "prixCarburant", year, lm);
+              const curMH = getRate(data.rates, ac.id, "maintenanceHoraire", year, lm);
+              return (<tr key={ac.id}>
+                <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
+                <td><input type="number" step="1" value={ov.tarifHeure !== undefined ? ov.tarifHeure : curTarif} onChange={e => setGOv(ac.id,"tarifHeure",pf(e.target.value))} style={inpSt(curTarif, ov.tarifHeure)}/></td>
+                <td><input type="number" step="1" value={ov.heures !== undefined ? ov.heures : Math.round(cur.heures)} onChange={e => setGOv(ac.id,"heures",pf(e.target.value))} style={inpSt(Math.round(cur.heures), ov.heures)}/></td>
+                <td><input type="number" step="1" value={ov.rotations !== undefined ? ov.rotations : cur.rotations} onChange={e => setGOv(ac.id,"rotations",pf(e.target.value))} style={inpSt(cur.rotations, ov.rotations)}/></td>
+                <td><input type="number" step="0.01" value={ov.prixCarburant !== undefined ? ov.prixCarburant : curPC} onChange={e => setGOv(ac.id,"prixCarburant",pf(e.target.value))} style={inpSt(curPC, ov.prixCarburant)}/></td>
+                <td><input type="number" step="1" value={ov.maintenanceHoraire !== undefined ? ov.maintenanceHoraire : curMH} onChange={e => setGOv(ac.id,"maintenanceHoraire",pf(e.target.value))} style={inpSt(curMH, ov.maintenanceHoraire)}/></td>
+                <td className={cur.resultat>=0?"pos":"neg"}>{cur.resultat>=0?"+":""}{fmt(cur.resultat)}</td>
+                <td className={proj.resultat>=0?"pos":"neg"} style={{fontWeight:700}}>{proj.resultat>=0?"+":""}{fmt(proj.resultat)}</td>
+                <td style={{color:delta>=0?"var(--green)":"var(--red)",fontWeight:600}}>{delta>=0?"+":""}{fmt(delta)}</td>
+              </tr>);
+            })}</tbody>
+            <tfoot><tr style={{fontWeight:700,borderTop:"2px solid var(--border)"}}>
+              <td>TOTAL</td><td></td><td className="num">{fH(totProj.heures)}</td><td></td><td></td><td></td>
+              <td className={totCur.resultat>=0?"pos":"neg"}>{totCur.resultat>=0?"+":""}{fmt(totCur.resultat)}</td>
+              <td className={totProj.resultat>=0?"pos":"neg"}>{totProj.resultat>=0?"+":""}{fmt(totProj.resultat)}</td>
+              <td style={{color:totProj.resultat-totCur.resultat>=0?"var(--green)":"var(--red)"}}>{totProj.resultat-totCur.resultat>=0?"+":""}{fmt(totProj.resultat-totCur.resultat)}</td>
+            </tr></tfoot>
+          </table></div>
         </div>
       </div>
       <div className="sg">
-        <div className="sc"><div className="sc-l">Résultat actuel</div><div className={`sc-v ${current.resultat>=0?"g":"r"}`}>{current.resultat>=0?"+":""}{fmt(current.resultat)}</div></div>
-        <div className="sc hl" style={{borderColor:proj.tRes>=0?"var(--green)":"var(--red)"}}>
+        <div className="sc"><div className="sc-l">Résultat actuel</div><div className={`sc-v ${totCur.resultat>=0?"g":"r"}`}>{totCur.resultat>=0?"+":""}{fmt(totCur.resultat)}</div></div>
+        <div className="sc hl" style={{borderColor:totProj.resultat>=0?"var(--green)":"var(--red)"}}>
           <div className="sc-l">Résultat projeté</div>
-          <div className={`sc-v ${proj.tRes>=0?"g":"r"}`}>{proj.tRes>=0?"+":""}{fmt(proj.tRes)}</div>
-          <div className="sc-s">Δ {proj.tRes>current.resultat?"+":""}{fmt(proj.tRes-current.resultat)}</div>
+          <div className={`sc-v ${totProj.resultat>=0?"g":"r"}`}>{totProj.resultat>=0?"+":""}{fmt(totProj.resultat)}</div>
+          <div className="sc-s">Δ {totProj.resultat>totCur.resultat?"+":""}{fmt(totProj.resultat-totCur.resultat)}</div>
         </div>
-        <div className="sc"><div className="sc-l">Revenus projetés</div><div className="sc-v b">{fmt(proj.tR)}</div></div>
-        <div className="sc"><div className="sc-l">Heures projetées</div><div className="sc-v">{fH(proj.tH)}</div></div>
-      </div>
-      <div className="card">
-        <div className="card-h"><h2>Détail par avion</h2></div>
-        <div className="tw"><table>
-          <thead><tr><th>Avion</th><th>Heures</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>vs Actuel</th></tr></thead>
-          <tbody>{proj.items.map(({ac,heures,rev,dep,res,delta}) => (<tr key={ac.id}>
-            <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
-            <td className="num">{fH(heures)}</td><td className="num" style={{color:"var(--accent)"}}>{fmt(rev)}</td>
-            <td className="num">{fmt(dep)}</td><td className={res>=0?"pos":"neg"}>{res>=0?"+":""}{fmt(res)}</td>
-            <td style={{color:delta>=0?"var(--green)":"var(--red)",fontWeight:600}}>{delta>=0?"+":""}{fmt(delta)}</td>
-          </tr>))}</tbody>
-        </table></div>
+        <div className="sc"><div className="sc-l">Revenus projetés</div><div className="sc-v b">{fmt(totProj.revenu)}</div></div>
+        <div className="sc"><div className="sc-l">Heures projetées</div><div className="sc-v">{fH(totProj.heures)}</div></div>
       </div>
       {/* Save & compare scenarios */}
       <div className="card">
@@ -613,17 +613,14 @@ function Simulation({ data, year }) {
             <input value={scenName} onChange={e=>setScenName(e.target.value)} placeholder="Nom du scénario…" style={{flex:1,padding:"8px 12px",border:"1px solid var(--border)",borderRadius:8,fontSize:13,fontFamily:"inherit",outline:"none"}}/>
             <button className="btn btn-p btn-s" onClick={saveScenario} disabled={!scenName.trim()}>Sauvegarder</button>
           </div>
-          {!scenarios.length ? <div style={{color:"var(--text3)",fontSize:13}}>Aucun scénario sauvegardé. Ajustez les curseurs puis sauvegardez.</div> : (
+          {!scenarios.length ? <div style={{color:"var(--text3)",fontSize:13}}>Aucun scénario sauvegardé. Modifiez les valeurs puis sauvegardez.</div> : (
             <div className="tw"><table>
-              <thead><tr><th>Scénario</th><th>Heures</th><th>Tarif</th><th>Carburant</th><th>Fixes</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>vs Actuel</th><th></th></tr></thead>
+              <thead><tr><th>Scénario</th><th>Heures</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>vs Actuel</th><th></th></tr></thead>
               <tbody>{scenarios.map((s,i) => {
                 const d = s.res - current.resultat;
                 return (<tr key={i}>
                   <td className="tx" style={{fontWeight:600}}>{s.name}</td>
-                  <td className="num">{s.adjH>0?"+":""}{s.adjH}%</td>
-                  <td className="num">{s.adjT>0?"+":""}{s.adjT}%</td>
-                  <td className="num">{s.adjC>0?"+":""}{s.adjC}%</td>
-                  <td className="num">{s.adjF>0?"+":""}{s.adjF}%</td>
+                  <td className="num">{fH(s.heures)}</td>
                   <td className="num" style={{color:"var(--accent)"}}>{fmt(s.rev)}</td>
                   <td className="num">{fmt(s.dep)}</td>
                   <td className={s.res>=0?"pos":"neg"}>{s.res>=0?"+":""}{fmt(s.res)}</td>
