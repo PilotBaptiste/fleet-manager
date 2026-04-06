@@ -107,6 +107,51 @@ td.tx { font-weight:500; } td.num { font-variant-numeric:tabular-nums; }
 .login-box .btn-p { width:100%; justify-content:center; padding:12px; font-size:14px; margin-top:8px; }
 .login-err { color:var(--red); font-size:13px; margin-top:10px; }
 
+/* Synthesis ranking */
+.synth-row { display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--bg3); }
+.synth-row:last-child { border-bottom:none; }
+.synth-rank { width:28px; height:28px; border-radius:50%; background:var(--bg3); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:var(--text2); flex-shrink:0; }
+.synth-immat { font-size:14px; font-weight:700; color:var(--accent); min-width:90px; }
+.synth-bar-wrap { flex:1; height:10px; background:var(--bg3); border-radius:5px; overflow:hidden; }
+.synth-bar { height:100%; border-radius:5px; transition:width .3s ease; }
+.synth-val { font-size:14px; font-weight:700; min-width:100px; text-align:right; font-variant-numeric:tabular-nums; }
+
+/* Break-even gauge */
+.be-gauge { display:flex; align-items:center; gap:8px; width:100%; }
+.be-track { flex:1; height:8px; background:var(--bg3); border-radius:4px; position:relative; overflow:visible; }
+.be-fill { height:100%; border-radius:4px; transition:width .3s ease; position:absolute; top:0; left:0; }
+.be-marker { position:absolute; top:-4px; width:2px; height:16px; background:var(--text); border-radius:1px; z-index:1; }
+.be-label { font-size:11px; color:var(--text3); font-weight:600; white-space:nowrap; }
+
+/* Cost bar inline */
+.cb-bar-wrap { flex:2; height:8px; background:var(--bg3); border-radius:4px; overflow:hidden; }
+.cb-bar { height:100%; border-radius:4px; transition:width .3s ease; }
+
+/* Delta badges */
+.delta { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:700; }
+.delta-up { background:var(--green-s); color:var(--green); }
+.delta-dn { background:var(--red-s); color:var(--red); }
+.delta-eq { background:var(--bg3); color:var(--text3); }
+
+/* Override input highlight */
+.fi-mod input { border-color:var(--accent) !important; background:var(--accent-s) !important; }
+
+/* Sensitivity chart */
+.sens-chart { display:flex; align-items:flex-end; gap:4px; height:160px; padding-top:10px; }
+.sens-col { flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; height:100%; justify-content:flex-end; }
+.sens-b { width:100%; max-width:40px; border-radius:4px 4px 0 0; transition:height .3s ease; }
+.sens-cur { outline:2px solid var(--accent); outline-offset:1px; }
+.sens-lbl { font-size:9px; color:var(--text3); font-weight:600; }
+.sens-val { font-size:9px; color:var(--text2); font-weight:600; }
+
+/* Simulator compare layout */
+.sim-compare { display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:start; }
+.sim-vs { display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:800; color:var(--text3); padding-top:40px; }
+.sim-ac-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px; }
+
+/* Virtual aircraft form */
+.vac-form { background:var(--bg); border:1px solid var(--border); border-radius:var(--r); padding:16px; margin-top:12px; }
+
 @media (max-width:640px) {
   .app { padding:12px; }
   .hdr h1 { font-size:17px; } .hdr h1 span { display:none; }
