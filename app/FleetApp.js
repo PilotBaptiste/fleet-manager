@@ -309,7 +309,7 @@ function Activity({ data, db, year }) {
           const revCdb = (act.heures||0)*tarif;
           const revDc = (act.heuresDc||0)*tarif;
           const revRoulage = (act.rotations||0)*fEur;
-          const total = revCdb + revDc + revRoulage;
+          const total = revCdb + revDc;
           return (<tr key={`${acId}-${i}`}>
             <td className="tx" style={{fontWeight:600}}>{m}</td>
             <td><HMInput value={act.heures} onChange={v=>save(i,act,"heures",v)} style={{...inpSt,width:70}}/></td>
