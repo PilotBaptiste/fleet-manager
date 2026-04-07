@@ -344,16 +344,16 @@ function Activity({ data, db, year, range }) {
             <td className="num" style={{fontWeight:700,color:"var(--accent)"}}>{r.total>0?fmt(r.total):"—"}</td>
           </tr>
         ))}</tbody>
-        <tfoot><tr style={{fontWeight:700,borderTop:"2px solid var(--border)"}}>
-          <td>TOTAL</td>
-          <td className="num">{fH(tot.hCdb)}</td>
-          <td className="num" style={{color:"var(--orange)"}}>{fH(tot.hDc)}</td>
-          <td className="num">{tot.rotations}</td>
-          <td></td><td></td>
-          <td className="num" style={{color:"var(--accent)"}}>{fmt(tot.revCdb)}</td>
-          <td className="num" style={{color:"var(--orange)"}}>{fmt(tot.revDc)}</td>
-          <td className="num" style={{color:"var(--purple)",fontSize:12}}>{fmt(tot.revRoulage)}</td>
-          <td className="num" style={{fontWeight:700,color:"var(--accent)",fontSize:15}}>{fmt(tot.total)}</td>
+        <tfoot><tr style={{borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"}}>
+          <td className="tx" style={{fontWeight:800,fontSize:13,letterSpacing:.5,padding:"14px 12px"}}>TOTAL</td>
+          <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{fH(tot.hCdb)}</td>
+          <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hDc)}</td>
+          <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{tot.rotations}</td>
+          <td colSpan={2} style={{padding:"14px 12px",color:"var(--text3)",fontSize:11,fontStyle:"italic"}}>Total période</td>
+          <td className="num" style={{color:"var(--accent)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revCdb)}</td>
+          <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revDc)}</td>
+          <td className="num" style={{color:"var(--purple)",fontSize:12,padding:"14px 12px"}}>{fmt(tot.revRoulage)}</td>
+          <td className="num" style={{fontWeight:800,color:"var(--accent)",fontSize:15,padding:"14px 12px"}}>{fmt(tot.total)}</td>
         </tr></tfoot>
       </table></div>
     </div>
