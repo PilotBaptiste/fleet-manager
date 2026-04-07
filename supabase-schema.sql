@@ -62,12 +62,16 @@ CREATE TABLE ops (
   ac_id UUID REFERENCES aircraft(id) ON DELETE CASCADE,
   year INT NOT NULL,
   month INT NOT NULL,
+  op_date DATE,                          -- précise date de la facture (jour)
   cost NUMERIC NOT NULL DEFAULT 0,
   label TEXT NOT NULL,
   description TEXT,
   type TEXT DEFAULT 'maintenance',       -- 'maintenance', 'arret', 'autre'
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Migration: add column if table already exists
+ALTER TABLE ops ADD COLUMN IF NOT EXISTS op_date DATE;
 
 -- ================================================
 -- Row Level Security (RLS)

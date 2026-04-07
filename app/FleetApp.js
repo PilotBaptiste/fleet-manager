@@ -503,45 +503,68 @@ function Rates({ data, db, modal, setModal }) {
 
 // ════════ OPS ════════
 function Ops({ data, db, year, modal, setModal }) {
-  const [form, setForm] = useState({ acId:"", year, month:0, cost:"", label:"", desc:"", type:"maintenance" });
-  const openAdd = () => { setForm({acId:data.aircraft[0]?.id||"",year,month:new Date().getMonth(),cost:"",label:"",desc:"",type:"maintenance"}); setModal("op"); };
-  const save = async () => { if(!form.acId||!form.label) return; await db.addOp({...form,cost:pf(form.cost)}); setModal(null); };
-  const yearOps = (data.ops||[]).filter(o => pf(o.year)===year).sort((a,b) => a.month-b.month);
+  const todayIso = new Date().toISOString().slice(0,10);
+  const [form, setForm] = useState({ acId:"", opDate: todayIso, cost:"", label:"", desc:"", type:"maintenance" });
+  const [filterAc, setFilterAc] = useState("");
+  const openAdd = () => { setForm({acId:data.aircraft[0]?.id||"",opDate:todayIso,cost:"",label:"",desc:"",type:"maintenance"}); setModal("op"); };
+  const save = async () => { if(!form.acId||!form.label||!form.opDate) return; await db.addOp({...form,cost:pf(form.cost)}); setModal(null); };
+
+  const opDateOf = (o) => o.opDate || (o.year!=null && o.month!=null ? `${o.year}-${String(o.month+1).padStart(2,"0")}-01` : "");
+  const yearOps = (data.ops||[])
+    .filter(o => pf(o.year)===year)
+    .filter(o => !filterAc || o.acId===filterAc)
+    .sort((a,b) => (opDateOf(a) < opDateOf(b) ? -1 : 1));
+  const totalCost = yearOps.reduce((s,o)=>s+pf(o.cost),0);
+  const fmtDate = (iso) => { if(!iso) return "—"; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y}`; };
 
   return (<div>
     <div className="card">
-      <div className="card-h"><h2>Opérations exceptionnelles — {year}</h2><button className="btn btn-p" onClick={openAdd}>+ Ajouter</button></div>
+      <div className="card-h">
+        <h2>Opérations & factures — {year}</h2>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <select value={filterAc} onChange={e=>setFilterAc(e.target.value)} style={{padding:"6px 10px"}}>
+            <option value="">Tous les avions</option>
+            {data.aircraft.map(a=><option key={a.id} value={a.id}>{a.immat}</option>)}
+          </select>
+          <button className="btn btn-p" onClick={openAdd}>+ Ajouter</button>
+        </div>
+      </div>
       {!yearOps.length ? <div className="empty">Aucune opération en {year}.</div> : (
         <div className="tw"><table>
-          <thead><tr><th>Mois</th><th>Avion</th><th>Type</th><th>Libellé</th><th>Coût</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Avion</th><th>Type</th><th>Libellé</th><th>Description</th><th>Coût</th><th></th></tr></thead>
           <tbody>{yearOps.map(o => {
             const ac = data.aircraft.find(a=>a.id===o.acId);
             return (<tr key={o.id}>
-              <td className="tx">{MOS[o.month]} {o.year}</td>
+              <td className="tx">{fmtDate(opDateOf(o))}</td>
               <td className="tx" style={{color:"var(--accent)",fontWeight:600}}>{ac?.immat||"?"}</td>
               <td><span className={`tag ${o.type==="maintenance"?"tag-o":o.type==="arret"?"tag-r":"tag-p"}`}>{o.type==="maintenance"?"MAINT.":o.type==="arret"?"ARRÊT":"AUTRE"}</span></td>
               <td className="tx">{o.label}</td>
+              <td className="tx" style={{color:"var(--text3)",fontSize:12}}>{o.desc||""}</td>
               <td className="num" style={{color:"var(--red)",fontWeight:600}}>{fmt(o.cost)}</td>
               <td><button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteOp(o.id)}>✕</button></td>
             </tr>);
           })}</tbody>
+          <tfoot><tr style={{borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"}}>
+            <td colSpan={5} className="tx" style={{fontWeight:800,padding:"14px 12px",letterSpacing:.5}}>TOTAL {filterAc?`(${data.aircraft.find(a=>a.id===filterAc)?.immat})`:""}</td>
+            <td className="num" style={{color:"var(--red)",fontWeight:800,fontSize:15,padding:"14px 12px"}}>{fmt(totalCost)}</td>
+            <td></td>
+          </tr></tfoot>
         </table></div>
       )}
     </div>
     {modal==="op" && (<div className="mo" onClick={()=>setModal(null)}><div className="mod" onClick={e=>e.stopPropagation()}>
-      <div className="mod-h"><h3>Nouvelle opération</h3><button className="btn btn-s btn-ghost" onClick={()=>setModal(null)}>✕</button></div>
+      <div className="mod-h"><h3>Nouvelle facture / opération</h3><button className="btn btn-s btn-ghost" onClick={()=>setModal(null)}>✕</button></div>
       <div className="mod-b">
         <div className="fg" style={{marginBottom:14}}>
           <div className="fi"><label>Avion</label><select value={form.acId} onChange={e=>setForm(f=>({...f,acId:e.target.value}))}>{data.aircraft.map(a=><option key={a.id} value={a.id}>{a.immat}</option>)}</select></div>
           <div className="fi"><label>Type</label><select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}><option value="maintenance">Maintenance</option><option value="arret">Arrêt avion</option><option value="autre">Autre</option></select></div>
         </div>
         <div className="fg" style={{marginBottom:14}}>
-          <div className="fi"><label>Année</label><select value={form.year} onChange={e=>setForm(f=>({...f,year:parseInt(e.target.value)}))}>{YEARS.map(y=><option key={y} value={y}>{y}</option>)}</select></div>
-          <div className="fi"><label>Mois</label><select value={form.month} onChange={e=>setForm(f=>({...f,month:parseInt(e.target.value)}))}>{MO.map((m,i)=><option key={i} value={i}>{m}</option>)}</select></div>
-          <div className="fi"><label>Coût (€)</label><input type="number" min="0" value={form.cost} placeholder="0" onChange={e=>setForm(f=>({...f,cost:e.target.value}))}/></div>
+          <div className="fi"><label>Date facture</label><input type="date" value={form.opDate} onChange={e=>setForm(f=>({...f,opDate:e.target.value}))}/></div>
+          <div className="fi"><label>Coût (€)</label><input type="number" min="0" step="0.01" value={form.cost} placeholder="0" onChange={e=>setForm(f=>({...f,cost:e.target.value}))}/></div>
         </div>
-        <div className="fi" style={{marginBottom:14}}><label>Libellé</label><input value={form.label} onChange={e=>setForm(f=>({...f,label:e.target.value}))} placeholder="GV 2000h…"/></div>
-        <div className="fi"><label>Description</label><textarea value={form.desc} onChange={e=>setForm(f=>({...f,desc:e.target.value}))} placeholder="Détails…"/></div>
+        <div className="fi" style={{marginBottom:14}}><label>Libellé</label><input value={form.label} onChange={e=>setForm(f=>({...f,label:e.target.value}))} placeholder="GV 2000h, vidange…"/></div>
+        <div className="fi"><label>Description</label><textarea value={form.desc} onChange={e=>setForm(f=>({...f,desc:e.target.value}))} placeholder="Détails de la facture…"/></div>
       </div>
       <div className="mod-f"><button className="btn" onClick={()=>setModal(null)}>Annuler</button><button className="btn btn-p" onClick={save}>Enregistrer</button></div>
     </div></div>)}
