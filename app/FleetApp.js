@@ -306,20 +306,25 @@ function Activity({ data, db, year, range }) {
     const fEur = (forfaitMin/60)*tarif;
     const revCdb = (act.heures||0)*tarif;
     const revDc = (act.heuresDc||0)*tarif;
-    const revDec = (act.heuresDecouverte||0)*tDec;
+    const v1 = act.volsDec1||0, v2 = act.volsDec2||0, v3 = act.volsDec3||0;
+    const paxDec = v1 + 2*v2 + 3*v3;
+    const volsDec = v1 + v2 + v3;
+    const revDec = paxDec * tDec;
     const revInit = (act.heuresInitiation||0)*tInit;
     const revBia = (act.heuresBia||0)*tBia;
     const revRoulage = (act.rotations||0)*fEur;
     const total = revCdb + revDc + revDec + revInit + revBia;
-    return { i, act, tarif, tDec, tInit, tBia, forfaitMin, revCdb, revDc, revDec, revInit, revBia, revRoulage, total };
+    return { i, act, tarif, tDec, tInit, tBia, forfaitMin, paxDec, volsDec, revCdb, revDc, revDec, revInit, revBia, revRoulage, total };
   });
 
   // Totals
-  const tot = { hCdb:0, hDc:0, hDec:0, hInit:0, hBia:0, rotations:0, litres:0, revCdb:0, revDc:0, revDec:0, revInit:0, revBia:0, revRoulage:0, total:0 };
+  const tot = { hCdb:0, hDc:0, hDec:0, hInit:0, hBia:0, rotations:0, litres:0, v1:0, v2:0, v3:0, paxDec:0, volsDec:0, revCdb:0, revDc:0, revDec:0, revInit:0, revBia:0, revRoulage:0, total:0 };
   rows.forEach(r => {
     tot.hCdb += r.act.heures||0; tot.hDc += r.act.heuresDc||0;
     tot.hDec += r.act.heuresDecouverte||0; tot.hInit += r.act.heuresInitiation||0; tot.hBia += r.act.heuresBia||0;
     tot.rotations += r.act.rotations||0; tot.litres += r.act.litresCarburant||0;
+    tot.v1 += r.act.volsDec1||0; tot.v2 += r.act.volsDec2||0; tot.v3 += r.act.volsDec3||0;
+    tot.paxDec += r.paxDec; tot.volsDec += r.volsDec;
     tot.revCdb += r.revCdb; tot.revDc += r.revDc;
     tot.revDec += r.revDec; tot.revInit += r.revInit; tot.revBia += r.revBia;
     tot.revRoulage += r.revRoulage; tot.total += r.total;
@@ -332,18 +337,20 @@ function Activity({ data, db, year, range }) {
     <div className="chips">{data.aircraft.map(a => <button key={a.id} className={`chip ${acId===a.id?"on":""}`} onClick={() => setAcId(a.id)}>{a.immat} — {a.type}</button>)}</div>
     <div className="card">
       <div className="card-h"><h2>Activité <span className="badge">{data.aircraft.find(a=>a.id===acId)?.immat} · {periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Heures au format H:MM (ex: 2:30 = 2h30). Litres carburant : si renseigné, remplace le calcul conso×heures. Validez avec Tab ou Entrée.</p>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Heures au format H:MM. Vols baptême : nb de vols à 1, 2 ou 3 passagers (revenu = total passagers × tarif/pers). Litres carburant : si renseigné, remplace le calcul conso×heures.</p>
       <div className="tw" style={{overflowX:"auto"}}><table>
         <thead><tr>
           <th>Mois</th>
           <th style={{color:"var(--accent)"}}>CdB</th>
           <th style={{color:"var(--orange)"}}>DC</th>
-          <th style={{color:"var(--purple)"}}>Découv.</th>
+          <th style={{color:"var(--purple)"}}>Bapt. heures</th>
+          <th style={{color:"var(--purple)"}} colSpan={3}>Bapt. (1p / 2p / 3p)</th>
+          <th style={{color:"var(--purple)"}}>Pax</th>
           <th style={{color:"var(--purple)"}}>Initi.</th>
           <th style={{color:"var(--purple)"}}>BIA</th>
           <th>Mvts</th>
           <th>Litres</th>
-          <th>Rev. Pilotes</th><th>Rev. Découv.</th><th>Rev. Init.</th><th>Rev. BIA</th>
+          <th>Rev. Pilotes</th><th>Rev. Bapt.</th><th>Rev. Init.</th><th>Rev. BIA</th>
           <th>Revenu total</th>
         </tr></thead>
         <tbody>{rows.map(r => (
@@ -352,6 +359,10 @@ function Activity({ data, db, year, range }) {
             <td><HMInput value={r.act.heures} onChange={v=>saveHM(r.i,"heures",v)} style={{...inpSt,width:65}}/></td>
             <td><HMInput value={r.act.heuresDc} onChange={v=>saveHM(r.i,"heuresDc",v)} style={{...inpSt,width:65,borderColor:"var(--orange-s)"}}/></td>
             <td><HMInput value={r.act.heuresDecouverte} onChange={v=>saveHM(r.i,"heuresDecouverte",v)} style={{...inpSt,width:65}}/></td>
+            <td><input type="number" min="0" step="1" value={r.act.volsDec1||""} placeholder="0" onChange={e=>save(r.i,"volsDec1",e.target.value)} style={{...inpSt,width:42}}/></td>
+            <td><input type="number" min="0" step="1" value={r.act.volsDec2||""} placeholder="0" onChange={e=>save(r.i,"volsDec2",e.target.value)} style={{...inpSt,width:42}}/></td>
+            <td><input type="number" min="0" step="1" value={r.act.volsDec3||""} placeholder="0" onChange={e=>save(r.i,"volsDec3",e.target.value)} style={{...inpSt,width:42}}/></td>
+            <td className="num" style={{color:"var(--purple)",fontWeight:600}}>{r.paxDec>0?r.paxDec:"—"}</td>
             <td><HMInput value={r.act.heuresInitiation} onChange={v=>saveHM(r.i,"heuresInitiation",v)} style={{...inpSt,width:65}}/></td>
             <td><HMInput value={r.act.heuresBia} onChange={v=>saveHM(r.i,"heuresBia",v)} style={{...inpSt,width:65}}/></td>
             <td><input type="number" step="1" min="0" value={r.act.rotations||""} placeholder="0" onChange={e=>save(r.i,"rotations",e.target.value)} style={{...inpSt,width:55}}/></td>
@@ -368,6 +379,10 @@ function Activity({ data, db, year, range }) {
           <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{fH(tot.hCdb)}</td>
           <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hDc)}</td>
           <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hDec)}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{tot.v1||"—"}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{tot.v2||"—"}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{tot.v3||"—"}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:800,padding:"14px 12px"}}>{tot.paxDec||"—"}</td>
           <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hInit)}</td>
           <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hBia)}</td>
           <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{tot.rotations}</td>

@@ -39,10 +39,13 @@ CREATE TABLE monthly (
   heures NUMERIC DEFAULT 0,    -- heures CdB pilotes (commandant de bord)
   rotations INT DEFAULT 0,     -- nombre de mouvements (tous types confondus)
   heures_dc NUMERIC DEFAULT 0, -- heures Double Commande pilotes
-  heures_decouverte NUMERIC DEFAULT 0, -- vols découverte
+  heures_decouverte NUMERIC DEFAULT 0, -- vols découverte (heures avion, pour coûts)
   heures_initiation NUMERIC DEFAULT 0, -- vols d'initiation
   heures_bia NUMERIC DEFAULT 0,        -- vols BIA
   litres_carburant NUMERIC DEFAULT 0,  -- litres carburant réels (sinon calc via conso)
+  vols_dec_1pax INT DEFAULT 0,         -- nb vols baptême avec 1 passager
+  vols_dec_2pax INT DEFAULT 0,         -- nb vols baptême avec 2 passagers
+  vols_dec_3pax INT DEFAULT 0,         -- nb vols baptême avec 3 passagers
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(ac_id, year, month)
 );
@@ -52,6 +55,9 @@ ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_decouverte NUMERIC DEFAULT 0
 ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_initiation NUMERIC DEFAULT 0;
 ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_bia NUMERIC DEFAULT 0;
 ALTER TABLE monthly ADD COLUMN IF NOT EXISTS litres_carburant NUMERIC DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_dec_1pax INT DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_dec_2pax INT DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_dec_3pax INT DEFAULT 0;
 
 -- Loans
 CREATE TABLE loans (
