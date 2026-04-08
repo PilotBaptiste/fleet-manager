@@ -97,12 +97,13 @@ function Dashboard({ data, year, range }) {
       {/* ── KPI Cards ── */}
       <div className="sg">
         <div className="sc"><div className="sc-l">REVENUS</div><div className="sc-v b">{fmt(g.revenu)}</div><div className="sc-s">Pilotes {fmt((g.revenuVolCdb||0)+(g.revenuVolDc||0))} · Découv./Init./BIA {fmt((g.revenuDecouverte||0)+(g.revenuInitiation||0)+(g.revenuBia||0))}</div></div>
-        <div className="sc"><div className="sc-l">DÉPENSES</div><div className="sc-v o">{fmt(g.depenses)}</div><div className="sc-s">Fixes {fmt(g.fixe)} · Var {fmt(g.variable)}</div></div>
+        <div className="sc"><div className="sc-l">DÉPENSES</div><div className="sc-v o">{fmt(g.depenses)}</div><div className="sc-s">Récurrent {fmt(g.depensesNormales||g.depenses)}{(g.opsCExceptional||0)>0?` · Excep. ${fmt(g.opsCExceptional)}`:""}</div></div>
         <div className="sc hl" style={{borderColor:g.resultat>=0?"var(--green)":"var(--red)"}}>
           <div className="sc-l" style={{color:g.resultat>=0?"var(--green)":"var(--red)"}}>{g.resultat>=0?"✓ BÉNÉFICE":"✗ DÉFICIT"}</div>
           <div className={`sc-v ${g.resultat>=0?"g":"r"}`}>{g.resultat>=0?"+":""}{fmt(g.resultat)}</div>
           <div className="sc-s">
             Marge : {g.revenu>0?fP(g.resultat/g.revenu):"—"}
+            {(g.opsCExceptional||0)>0 && <span style={{marginLeft:8,color:"var(--text3)"}}>· hors excep. : {fmt(g.resultatRecurrent)}</span>}
             {gPrev.revenu > 0 && (() => { const d = dFmt(g.resultat, gPrev.resultat); return d ? <span style={{marginLeft:8}} className={`delta ${d.cls}`}>vs {year-1} : {d.txt}</span> : null; })()}
           </div>
         </div>
@@ -526,67 +527,164 @@ function Rates({ data, db, modal, setModal }) {
 // ════════ OPS ════════
 function Ops({ data, db, year, modal, setModal }) {
   const todayIso = new Date().toISOString().slice(0,10);
-  const [form, setForm] = useState({ acId:"", opDate: todayIso, cost:"", label:"", desc:"", type:"maintenance" });
+  const cats = data.categories || [];
+  const defaultCatId = cats[0]?.id || "";
+  const [form, setForm] = useState({ id:null, acId:"", opDate: todayIso, cost:"", label:"", desc:"", categoryId: defaultCatId, isExceptional: false });
   const [filterAc, setFilterAc] = useState("");
-  const openAdd = () => { setForm({acId:data.aircraft[0]?.id||"",opDate:todayIso,cost:"",label:"",desc:"",type:"maintenance"}); setModal("op"); };
-  const save = async () => { if(!form.acId||!form.label||!form.opDate) return; await db.addOp({...form,cost:pf(form.cost)}); setModal(null); };
+  const [filterCat, setFilterCat] = useState("");
+  const [filterScope, setFilterScope] = useState("year"); // "year" or "all"
+  const [showException, setShowException] = useState("all"); // "all", "only", "exclude"
+
+  const openAdd = () => { setForm({id:null,acId:data.aircraft[0]?.id||"",opDate:todayIso,cost:"",label:"",desc:"",categoryId:defaultCatId,isExceptional:false}); setModal("op"); };
+  const openEdit = (o) => { setForm({id:o.id,acId:o.acId,opDate:o.opDate||todayIso,cost:String(o.cost),label:o.label,desc:o.desc||"",categoryId:o.categoryId||"",isExceptional:!!o.isExceptional}); setModal("op"); };
+  const save = async () => {
+    if (!form.acId || !form.label || !form.opDate) return;
+    const payload = { acId:form.acId, opDate:form.opDate, cost:pf(form.cost), label:form.label, desc:form.desc, categoryId:form.categoryId||null, isExceptional:form.isExceptional };
+    if (form.id) await db.updateOp(form.id, payload);
+    else await db.addOp(payload);
+    setModal(null);
+  };
 
   const opDateOf = (o) => o.opDate || (o.year!=null && o.month!=null ? `${o.year}-${String(o.month+1).padStart(2,"0")}-01` : "");
-  const yearOps = (data.ops||[])
-    .filter(o => pf(o.year)===year)
-    .filter(o => !filterAc || o.acId===filterAc)
-    .sort((a,b) => (opDateOf(a) < opDateOf(b) ? -1 : 1));
-  const totalCost = yearOps.reduce((s,o)=>s+pf(o.cost),0);
   const fmtDate = (iso) => { if(!iso) return "—"; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y}`; };
+  const catById = (id) => cats.find(c => c.id === id);
+
+  const filteredOps = (data.ops||[])
+    .filter(o => filterScope==="all" || pf(o.year)===year)
+    .filter(o => !filterAc || o.acId===filterAc)
+    .filter(o => !filterCat || o.categoryId===filterCat)
+    .filter(o => showException==="all" || (showException==="only" ? o.isExceptional : !o.isExceptional))
+    .sort((a,b) => (opDateOf(a) < opDateOf(b) ? -1 : 1));
+
+  // Bilan par catégorie
+  const byCat = {};
+  filteredOps.forEach(o => {
+    const k = o.categoryId || "_none";
+    if (!byCat[k]) byCat[k] = { cat: catById(o.categoryId), normal:0, exceptional:0, count:0 };
+    if (o.isExceptional) byCat[k].exceptional += pf(o.cost);
+    else byCat[k].normal += pf(o.cost);
+    byCat[k].count += 1;
+  });
+  const catSummary = Object.entries(byCat)
+    .map(([k,v]) => ({ key:k, ...v, total: v.normal+v.exceptional }))
+    .sort((a,b) => b.total - a.total);
+
+  const totalNormal = catSummary.reduce((s,c)=>s+c.normal,0);
+  const totalExceptional = catSummary.reduce((s,c)=>s+c.exceptional,0);
+  const totalAll = totalNormal + totalExceptional;
+  const scopeLabel = filterScope==="all" ? "Tout l'historique" : year;
 
   return (<div>
+    {/* ── Filtres ── */}
     <div className="card">
       <div className="card-h">
-        <h2>Opérations & factures — {year}</h2>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <select value={filterAc} onChange={e=>setFilterAc(e.target.value)} style={{padding:"6px 10px"}}>
-            <option value="">Tous les avions</option>
-            {data.aircraft.map(a=><option key={a.id} value={a.id}>{a.immat}</option>)}
-          </select>
+        <h2>Opérations & factures — {scopeLabel}</h2>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <button className="btn btn-s" onClick={()=>setModal("cats")}>⚙ Catégories</button>
           <button className="btn btn-p" onClick={openAdd}>+ Ajouter</button>
         </div>
       </div>
-      {!yearOps.length ? <div className="empty">Aucune opération en {year}.</div> : (
+      <div style={{display:"flex",gap:10,padding:"12px 20px",flexWrap:"wrap",alignItems:"center",borderBottom:"1px solid var(--border)"}}>
+        <select value={filterScope} onChange={e=>setFilterScope(e.target.value)} style={{padding:"6px 10px",fontSize:13}}>
+          <option value="year">Année {year}</option>
+          <option value="all">Tout l'historique</option>
+        </select>
+        <select value={filterAc} onChange={e=>setFilterAc(e.target.value)} style={{padding:"6px 10px",fontSize:13}}>
+          <option value="">Tous les avions</option>
+          {data.aircraft.map(a=><option key={a.id} value={a.id}>{a.immat}</option>)}
+        </select>
+        <select value={filterCat} onChange={e=>setFilterCat(e.target.value)} style={{padding:"6px 10px",fontSize:13}}>
+          <option value="">Toutes les catégories</option>
+          {cats.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select value={showException} onChange={e=>setShowException(e.target.value)} style={{padding:"6px 10px",fontSize:13}}>
+          <option value="all">Normales + exceptionnelles</option>
+          <option value="exclude">Normales seulement</option>
+          <option value="only">Exceptionnelles seulement</option>
+        </select>
+      </div>
+    </div>
+
+    {/* ── Bilan par catégorie ── */}
+    {catSummary.length > 0 && (
+      <div className="card">
+        <div className="card-h"><h2>Bilan par catégorie <span className="badge">{scopeLabel}</span></h2></div>
         <div className="tw"><table>
-          <thead><tr><th>Date</th><th>Avion</th><th>Type</th><th>Libellé</th><th>Description</th><th>Coût</th><th></th></tr></thead>
-          <tbody>{yearOps.map(o => {
-            const ac = data.aircraft.find(a=>a.id===o.acId);
-            return (<tr key={o.id}>
-              <td className="tx">{fmtDate(opDateOf(o))}</td>
-              <td className="tx" style={{color:"var(--accent)",fontWeight:600}}>{ac?.immat||"?"}</td>
-              <td><span className={`tag ${o.type==="maintenance"?"tag-o":o.type==="arret"?"tag-r":o.type==="assurance"?"tag-a":o.type==="carburant"?"tag-c":o.type==="huile"?"tag-h":o.type==="pret"?"tag-l":"tag-p"}`}>{({maintenance:"MAINT.",arret:"ARRÊT",assurance:"ASSUR.",carburant:"CARBU.",huile:"HUILE",pret:"PRÊT",autre:"AUTRE"})[o.type]||o.type.toUpperCase()}</span></td>
-              <td className="tx">{o.label}</td>
-              <td className="tx" style={{color:"var(--text3)",fontSize:12}}>{o.desc||""}</td>
-              <td className="num" style={{color:"var(--red)",fontWeight:600}}>{fmt(o.cost)}</td>
-              <td><button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteOp(o.id)}>✕</button></td>
+          <thead><tr><th>Catégorie</th><th>Compte</th><th>Nb</th><th>Normal</th><th>Exceptionnel</th><th>Total</th><th>%</th></tr></thead>
+          <tbody>{catSummary.map(c => {
+            const pct = totalAll > 0 ? (c.total / totalAll) * 100 : 0;
+            return (<tr key={c.key}>
+              <td className="tx">
+                <span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:c.cat?.color||"#9ca3af",marginRight:8,verticalAlign:"middle"}}></span>
+                <span style={{fontWeight:600}}>{c.cat?.name || "(sans catégorie)"}</span>
+              </td>
+              <td className="tx" style={{color:"var(--text3)",fontSize:12}}>{c.cat?.accountCode||"—"}</td>
+              <td className="num">{c.count}</td>
+              <td className="num" style={{color:c.normal>0?"var(--red)":"var(--text3)"}}>{c.normal>0?fmt(c.normal):"—"}</td>
+              <td className="num" style={{color:c.exceptional>0?"var(--orange)":"var(--text3)",fontStyle:c.exceptional>0?"italic":"normal"}}>{c.exceptional>0?fmt(c.exceptional):"—"}</td>
+              <td className="num" style={{fontWeight:700,color:"var(--red)"}}>{fmt(c.total)}</td>
+              <td className="num" style={{color:"var(--text3)",fontSize:12}}>{pct.toFixed(1)}%</td>
             </tr>);
           })}</tbody>
           <tfoot><tr style={{borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"}}>
-            <td colSpan={5} className="tx" style={{fontWeight:800,padding:"14px 12px",letterSpacing:.5}}>TOTAL {filterAc?`(${data.aircraft.find(a=>a.id===filterAc)?.immat})`:""}</td>
-            <td className="num" style={{color:"var(--red)",fontWeight:800,fontSize:15,padding:"14px 12px"}}>{fmt(totalCost)}</td>
+            <td colSpan={3} className="tx" style={{fontWeight:800,padding:"14px 12px",letterSpacing:.5}}>TOTAL</td>
+            <td className="num" style={{color:"var(--red)",fontWeight:700,padding:"14px 12px"}}>{fmt(totalNormal)}</td>
+            <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px",fontStyle:"italic"}}>{fmt(totalExceptional)}</td>
+            <td className="num" style={{color:"var(--red)",fontWeight:800,fontSize:15,padding:"14px 12px"}}>{fmt(totalAll)}</td>
+            <td></td>
+          </tr></tfoot>
+        </table></div>
+      </div>
+    )}
+
+    {/* ── Liste des opérations ── */}
+    <div className="card">
+      <div className="card-h"><h2>Détail des opérations <span className="badge">{filteredOps.length}</span></h2></div>
+      {!filteredOps.length ? <div className="empty">Aucune opération avec ces filtres.</div> : (
+        <div className="tw"><table>
+          <thead><tr><th>Date</th><th>Avion</th><th>Catégorie</th><th>Libellé</th><th>Description</th><th>Coût</th><th></th></tr></thead>
+          <tbody>{filteredOps.map(o => {
+            const ac = data.aircraft.find(a=>a.id===o.acId);
+            const cat = catById(o.categoryId);
+            return (<tr key={o.id} style={o.isExceptional?{background:"rgba(234,88,12,0.06)"}:{}}>
+              <td className="tx">{fmtDate(opDateOf(o))}</td>
+              <td className="tx" style={{color:"var(--accent)",fontWeight:600}}>{ac?.immat||"?"}</td>
+              <td>
+                {cat ? (
+                  <span style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 8px",borderRadius:4,background:cat.color+"22",color:cat.color,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:.3}}>
+                    <span style={{width:6,height:6,borderRadius:"50%",background:cat.color}}></span>
+                    {cat.name}
+                  </span>
+                ) : <span style={{color:"var(--text3)",fontSize:11}}>—</span>}
+                {o.isExceptional && <span style={{marginLeft:6,padding:"2px 6px",background:"var(--orange,#ea580c)",color:"#fff",fontSize:9,borderRadius:3,fontWeight:700,letterSpacing:.5}}>EXCEP.</span>}
+              </td>
+              <td className="tx">{o.label}</td>
+              <td className="tx" style={{color:"var(--text3)",fontSize:12}}>{o.desc||""}</td>
+              <td className="num" style={{color:"var(--red)",fontWeight:600}}>{fmt(o.cost)}</td>
+              <td>
+                <button className="btn btn-s btn-ghost" onClick={() => openEdit(o)} style={{marginRight:4}}>✎</button>
+                <button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteOp(o.id)}>✕</button>
+              </td>
+            </tr>);
+          })}</tbody>
+          <tfoot><tr style={{borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"}}>
+            <td colSpan={5} className="tx" style={{fontWeight:800,padding:"14px 12px",letterSpacing:.5}}>TOTAL FILTRÉ</td>
+            <td className="num" style={{color:"var(--red)",fontWeight:800,fontSize:15,padding:"14px 12px"}}>{fmt(totalAll)}</td>
             <td></td>
           </tr></tfoot>
         </table></div>
       )}
     </div>
+
+    {/* ── Modal édition opération ── */}
     {modal==="op" && (<div className="mo" onClick={()=>setModal(null)}><div className="mod" onClick={e=>e.stopPropagation()}>
-      <div className="mod-h"><h3>Nouvelle facture / opération</h3><button className="btn btn-s btn-ghost" onClick={()=>setModal(null)}>✕</button></div>
+      <div className="mod-h"><h3>{form.id?"Modifier":"Nouvelle"} facture / opération</h3><button className="btn btn-s btn-ghost" onClick={()=>setModal(null)}>✕</button></div>
       <div className="mod-b">
         <div className="fg" style={{marginBottom:14}}>
           <div className="fi"><label>Avion</label><select value={form.acId} onChange={e=>setForm(f=>({...f,acId:e.target.value}))}>{data.aircraft.map(a=><option key={a.id} value={a.id}>{a.immat}</option>)}</select></div>
-          <div className="fi"><label>Type</label><select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}>
-            <option value="maintenance">Maintenance</option>
-            <option value="assurance">Assurance (trimestre)</option>
-            <option value="carburant">Carburant (annuel ou facture)</option>
-            <option value="huile">Huile (annuel ou facture)</option>
-            <option value="pret">Prêt / Amortissement</option>
-            <option value="arret">Arrêt avion</option>
-            <option value="autre">Autre</option>
+          <div className="fi"><label>Catégorie</label><select value={form.categoryId} onChange={e=>setForm(f=>({...f,categoryId:e.target.value}))}>
+            <option value="">— Aucune —</option>
+            {cats.map(c=><option key={c.id} value={c.id}>{c.name}{c.accountCode?` (${c.accountCode})`:""}</option>)}
           </select></div>
         </div>
         <div className="fg" style={{marginBottom:14}}>
@@ -594,11 +692,76 @@ function Ops({ data, db, year, modal, setModal }) {
           <div className="fi"><label>Coût (€)</label><input type="number" min="0" step="0.01" value={form.cost} placeholder="0" onChange={e=>setForm(f=>({...f,cost:e.target.value}))}/></div>
         </div>
         <div className="fi" style={{marginBottom:14}}><label>Libellé</label><input value={form.label} onChange={e=>setForm(f=>({...f,label:e.target.value}))} placeholder="GV 2000h, vidange…"/></div>
-        <div className="fi"><label>Description</label><textarea value={form.desc} onChange={e=>setForm(f=>({...f,desc:e.target.value}))} placeholder="Détails de la facture…"/></div>
+        <div className="fi" style={{marginBottom:14}}><label>Description</label><textarea value={form.desc} onChange={e=>setForm(f=>({...f,desc:e.target.value}))} placeholder="Détails de la facture…"/></div>
+        <div className="fi" style={{display:"flex",alignItems:"center",gap:8}}>
+          <input type="checkbox" id="exceptional" checked={form.isExceptional} onChange={e=>setForm(f=>({...f,isExceptional:e.target.checked}))} style={{width:16,height:16}}/>
+          <label htmlFor="exceptional" style={{cursor:"pointer",margin:0}}>Marquer comme <strong>opération exceptionnelle</strong> (s'affiche séparément dans le bilan)</label>
+        </div>
       </div>
       <div className="mod-f"><button className="btn" onClick={()=>setModal(null)}>Annuler</button><button className="btn btn-p" onClick={save}>Enregistrer</button></div>
     </div></div>)}
+
+    {/* ── Modal gestion catégories ── */}
+    {modal==="cats" && <CategoriesModal data={data} db={db} onClose={()=>setModal(null)}/>}
   </div>);
+}
+
+// ════════ CATEGORIES MODAL ════════
+function CategoriesModal({ data, db, onClose }) {
+  const cats = data.categories || [];
+  const [form, setForm] = useState({ id:null, name:"", color:"#6b7280", accountCode:"", sortOrder:100 });
+  const reset = () => setForm({ id:null, name:"", color:"#6b7280", accountCode:"", sortOrder:100 });
+  const save = async () => {
+    if (!form.name) return;
+    const payload = { name:form.name, color:form.color, accountCode:form.accountCode, sortOrder:parseInt(form.sortOrder)||0 };
+    if (form.id) await db.updateCategory(form.id, payload);
+    else await db.addCategory(payload);
+    reset();
+  };
+  const edit = (c) => setForm({ id:c.id, name:c.name, color:c.color, accountCode:c.accountCode, sortOrder:c.sortOrder });
+  const del = async (id) => {
+    if (!confirm("Supprimer cette catégorie ? Les opérations qui l'utilisent garderont leur montant mais perdront le rattachement.")) return;
+    await db.deleteCategory(id);
+    if (form.id === id) reset();
+  };
+
+  return (<div className="mo" onClick={onClose}><div className="mod" onClick={e=>e.stopPropagation()} style={{maxWidth:760}}>
+    <div className="mod-h"><h3>Gestion des catégories</h3><button className="btn btn-s btn-ghost" onClick={onClose}>✕</button></div>
+    <div className="mod-b">
+      {cats.length > 0 && (
+        <div className="tw" style={{marginBottom:18,maxHeight:340,overflowY:"auto"}}><table>
+          <thead><tr><th></th><th>Nom</th><th>Compte</th><th>Ordre</th><th></th></tr></thead>
+          <tbody>{cats.map(c => (
+            <tr key={c.id}>
+              <td><span style={{display:"inline-block",width:14,height:14,borderRadius:3,background:c.color}}></span></td>
+              <td className="tx" style={{fontWeight:600}}>{c.name}</td>
+              <td className="tx" style={{color:"var(--text3)",fontSize:12}}>{c.accountCode||"—"}</td>
+              <td className="num">{c.sortOrder}</td>
+              <td>
+                <button className="btn btn-s btn-ghost" onClick={()=>edit(c)} style={{marginRight:4}}>✎</button>
+                <button className="btn btn-s btn-d btn-ghost" onClick={()=>del(c.id)}>✕</button>
+              </td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
+      <div style={{borderTop:"1px solid var(--border)",paddingTop:14}}>
+        <h4 style={{margin:"0 0 10px",fontSize:13,color:"var(--text2)"}}>{form.id?"Modifier":"Ajouter"} une catégorie</h4>
+        <div className="fg" style={{marginBottom:10}}>
+          <div className="fi"><label>Nom</label><input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Pneus, Réparation…"/></div>
+          <div className="fi"><label>Couleur</label><input type="color" value={form.color} onChange={e=>setForm(f=>({...f,color:e.target.value}))} style={{height:36,padding:2}}/></div>
+        </div>
+        <div className="fg">
+          <div className="fi"><label>Code compta (optionnel)</label><input value={form.accountCode} onChange={e=>setForm(f=>({...f,accountCode:e.target.value}))} placeholder="60625"/></div>
+          <div className="fi"><label>Ordre d'affichage</label><input type="number" value={form.sortOrder} onChange={e=>setForm(f=>({...f,sortOrder:e.target.value}))}/></div>
+        </div>
+      </div>
+    </div>
+    <div className="mod-f">
+      {form.id && <button className="btn" onClick={reset}>Nouvelle</button>}
+      <button className="btn btn-p" onClick={save}>{form.id?"Enregistrer":"Ajouter"}</button>
+    </div>
+  </div></div>);
 }
 
 // ════════ LOANS ════════

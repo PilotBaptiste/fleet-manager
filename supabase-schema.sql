@@ -66,22 +66,54 @@ CREATE TABLE loans (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Exceptional operations
+-- Categories: configurable buckets for operations (Carburant, Assurance, Pneus...)
+CREATE TABLE op_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  color TEXT DEFAULT '#6b7280',          -- hex color for UI tags
+  account_code TEXT,                     -- comptabilité (ex: '602200')
+  sort_order INT DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Operations / factures (charges récurrentes ou exceptionnelles)
 CREATE TABLE ops (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ac_id UUID REFERENCES aircraft(id) ON DELETE CASCADE,
+  category_id UUID REFERENCES op_categories(id) ON DELETE SET NULL,
   year INT NOT NULL,
   month INT NOT NULL,
   op_date DATE,                          -- précise date de la facture (jour)
   cost NUMERIC NOT NULL DEFAULT 0,
   label TEXT NOT NULL,
   description TEXT,
-  type TEXT DEFAULT 'maintenance',       -- 'maintenance', 'arret', 'autre'
+  type TEXT DEFAULT 'maintenance',       -- legacy, kept for backward compat
+  is_exceptional BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Migration: add column if table already exists
+-- Migrations
 ALTER TABLE ops ADD COLUMN IF NOT EXISTS op_date DATE;
+ALTER TABLE ops ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES op_categories(id) ON DELETE SET NULL;
+ALTER TABLE ops ADD COLUMN IF NOT EXISTS is_exceptional BOOLEAN NOT NULL DEFAULT false;
+
+-- Default categories (run once after table creation)
+INSERT INTO op_categories (name, color, account_code, sort_order) VALUES
+  ('Carburant',          '#f59e0b', '602200', 10),
+  ('Variation stock carburant', '#fbbf24', '603200', 15),
+  ('Huile',              '#a16207', '60622',  20),
+  ('Maintenance périodique', '#dc2626', '60623', 30),
+  ('Convoyage maintenance',  '#ea580c', '606231', 35),
+  ('Vol d''essai maintenance','#ea580c', '606232', 36),
+  ('Réparation petit matériel','#b91c1c', '60624', 40),
+  ('Pneus',              '#7c2d12', '60625',  50),
+  ('Gestion navigabilité','#6366f1', '606297', 60),
+  ('Assurance',          '#059669', '616300', 70),
+  ('Taxes',              '#9ca3af', '637800', 80),
+  ('Amortissement',      '#7c3aed', '681120', 90),
+  ('Prêt / mensualité',  '#8b5cf6', NULL,     95),
+  ('Autre',              '#6b7280', NULL,     999)
+ON CONFLICT (name) DO NOTHING;
 
 -- ================================================
 -- Row Level Security (RLS)
@@ -92,6 +124,7 @@ ALTER TABLE rates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE monthly ENABLE ROW LEVEL SECURITY;
 ALTER TABLE loans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ops ENABLE ROW LEVEL SECURITY;
+ALTER TABLE op_categories ENABLE ROW LEVEL SECURITY;
 
 -- Allow all operations for authenticated users
 CREATE POLICY "auth_all" ON aircraft FOR ALL USING (auth.role() = 'authenticated');
@@ -99,3 +132,4 @@ CREATE POLICY "auth_all" ON rates FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "auth_all" ON monthly FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "auth_all" ON loans FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "auth_all" ON ops FOR ALL USING (auth.role() = 'authenticated');
+CREATE POLICY "auth_all" ON op_categories FOR ALL USING (auth.role() = 'authenticated');
