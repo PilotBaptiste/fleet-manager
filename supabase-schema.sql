@@ -30,18 +30,28 @@ CREATE TABLE rates (
 
 CREATE INDEX idx_rates_ac ON rates(ac_id, field, from_year, from_month);
 
--- Monthly activity (heures CdB + DC, mouvements)
+-- Monthly activity (heures par catégorie de vol)
 CREATE TABLE monthly (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ac_id UUID REFERENCES aircraft(id) ON DELETE CASCADE,
   year INT NOT NULL,
   month INT NOT NULL,          -- 0-11
-  heures NUMERIC DEFAULT 0,    -- heures CdB (commandant de bord)
+  heures NUMERIC DEFAULT 0,    -- heures CdB pilotes (commandant de bord)
   rotations INT DEFAULT 0,     -- nombre de mouvements (tous types confondus)
-  heures_dc NUMERIC DEFAULT 0, -- heures Double Commande
+  heures_dc NUMERIC DEFAULT 0, -- heures Double Commande pilotes
+  heures_decouverte NUMERIC DEFAULT 0, -- vols découverte
+  heures_initiation NUMERIC DEFAULT 0, -- vols d'initiation
+  heures_bia NUMERIC DEFAULT 0,        -- vols BIA
+  litres_carburant NUMERIC DEFAULT 0,  -- litres carburant réels (sinon calc via conso)
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(ac_id, year, month)
 );
+
+-- Migrations
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_decouverte NUMERIC DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_initiation NUMERIC DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_bia NUMERIC DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS litres_carburant NUMERIC DEFAULT 0;
 
 -- Loans
 CREATE TABLE loans (

@@ -96,7 +96,7 @@ function Dashboard({ data, year, range }) {
     <div>
       {/* ── KPI Cards ── */}
       <div className="sg">
-        <div className="sc"><div className="sc-l">REVENUS</div><div className="sc-v b">{fmt(g.revenu)}</div><div className="sc-s">CdB {fmt(g.revenuVolCdb)} · DC {fmt(g.revenuVolDc)} · Roulage {fmt(g.revenuRoulage)}</div></div>
+        <div className="sc"><div className="sc-l">REVENUS</div><div className="sc-v b">{fmt(g.revenu)}</div><div className="sc-s">Pilotes {fmt((g.revenuVolCdb||0)+(g.revenuVolDc||0))} · Découv./Init./BIA {fmt((g.revenuDecouverte||0)+(g.revenuInitiation||0)+(g.revenuBia||0))}</div></div>
         <div className="sc"><div className="sc-l">DÉPENSES</div><div className="sc-v o">{fmt(g.depenses)}</div><div className="sc-s">Fixes {fmt(g.fixe)} · Var {fmt(g.variable)}</div></div>
         <div className="sc hl" style={{borderColor:g.resultat>=0?"var(--green)":"var(--red)"}}>
           <div className="sc-l" style={{color:g.resultat>=0?"var(--green)":"var(--red)"}}>{g.resultat>=0?"✓ BÉNÉFICE":"✗ DÉFICIT"}</div>
@@ -168,23 +168,24 @@ function Dashboard({ data, year, range }) {
       <div className="card">
         <div className="card-h"><h2>Rentabilité par avion <span className="badge">{periodLabel}</span></h2></div>
         <div className="tw"><table>
-          <thead><tr><th>Avion</th><th>Type</th><th>H. CdB</th><th>H. DC</th><th>Total h</th><th>Vols</th><th>Rev. CdB</th><th>Rev. DC</th><th>Revenu total</th><th>dont Roulage</th><th>Dépenses</th><th>Résultat</th><th>Coût/h</th><th>Verdict</th></tr></thead>
+          <thead><tr><th>Avion</th><th>Type</th><th>H. Pilotes</th><th>H. Autres</th><th>Total h</th><th>Vols</th><th>Rev. Pilotes</th><th>Rev. Autres</th><th>Revenu total</th><th>Dépenses</th><th>Résultat</th><th>Coût/h</th><th>Verdict</th></tr></thead>
           <tbody>{acData.map(({ac, f, fPrev}) => {
             const ok = f.resultat >= 0;
             const dRes = dFmt(f.resultat, fPrev.resultat);
             const dH = f.heures - fPrev.heures;
+            const hAutres = (f.hDec||0) + (f.hInit||0) + (f.hBia||0);
+            const revAutres = (f.revenuDecouverte||0) + (f.revenuInitiation||0) + (f.revenuBia||0);
             return (<>
               <tr key={ac.id}>
                 <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
                 <td className="tx">{ac.type}</td>
-                <td className="num">{fH(f.hCdb)}</td>
-                <td className="num" style={{color:"var(--orange)"}}>{fH(f.hDc)}</td>
+                <td className="num">{fH(f.heuresPilote||0)}</td>
+                <td className="num" style={{color:"var(--purple)"}}>{hAutres>0?fH(hAutres):"—"}</td>
                 <td className="num" style={{fontWeight:600}}>{fH(f.heures)}</td>
                 <td className="num">{f.rotations}</td>
-                <td className="num" style={{color:"var(--accent)"}}>{fmt(f.revenuVolCdb)}</td>
-                <td className="num" style={{color:"var(--orange)"}}>{fmt(f.revenuVolDc)}</td>
+                <td className="num" style={{color:"var(--accent)"}}>{fmt(f.revenuPilote||0)}</td>
+                <td className="num" style={{color:"var(--purple)"}}>{revAutres>0?fmt(revAutres):"—"}</td>
                 <td className="num" style={{fontWeight:700}}>{fmt(f.revenu)}</td>
-                <td className="num" style={{color:"var(--purple)",fontSize:12}}>{fmt(f.revenuRoulage)}</td>
                 <td className="num">{fmt(f.depenses)}</td>
                 <td className={ok?"pos":"neg"}>{ok?"+":""}{fmt(f.resultat)}</td>
                 <td className="num">{f.heures>0?fmt2(f.coutH):"—"}</td>
@@ -193,9 +194,9 @@ function Dashboard({ data, year, range }) {
               {(fPrev.heures > 0 || fPrev.revenu > 0) && <tr key={ac.id+"-cmp"} style={{background:"var(--bg)"}}>
                 <td colSpan={2} style={{fontSize:11,color:"var(--text3)",paddingTop:4,paddingBottom:4}}>vs {year-1}</td>
                 <td colSpan={3} className="num" style={{fontSize:11,color:dH>=0?"var(--green)":"var(--red)"}}>{dH>=0?"+":""}{dH.toFixed(1)}h total</td>
-                <td colSpan={5}></td>
+                <td colSpan={4}></td>
                 <td colSpan={2} style={{fontSize:11}}>{dRes && <span className={`delta ${dRes.cls}`}>{dRes.txt}</span>}</td>
-                <td></td>
+                <td colSpan={2}></td>
               </tr>}
             </>);
           })}</tbody>
@@ -286,31 +287,41 @@ function Activity({ data, db, year, range }) {
   const inpSt = {padding:"6px 10px",border:"1px solid var(--border)",borderRadius:6,fontSize:14,fontFamily:"inherit",outline:"none",background:"var(--bg)"};
   if (!data.aircraft.length) return <div className="card"><div className="empty">Ajoutez des avions dans Flotte.</div></div>;
 
-  const save = (i, act, field, val) => {
-    const h = field==="heures"?val:(act.heures||0);
-    const r = field==="rotations"?pf(val):(act.rotations||0);
-    const hd = field==="heuresDc"?val:(act.heuresDc||0);
-    db.setMonthly(acId,year,i,h,r,hd);
+  const save = (i, field, val) => {
+    db.setMonthly(acId, year, i, { [field]: pf(val) });
+  };
+  const saveHM = (i, field, val) => {
+    db.setMonthly(acId, year, i, { [field]: val });
   };
 
   // Compute monthly rows
   const rows = range.map(i => {
     const act = getActivity(data,acId,year,i);
     const tarif = getRate(data.rates,acId,"tarifHeure",year,i);
+    const tDec = getRate(data.rates,acId,"tarifDecouverte",year,i);
+    const tInit = getRate(data.rates,acId,"tarifInitiation",year,i);
+    const tBia = getRate(data.rates,acId,"tarifBIA",year,i);
     const forfaitMin = getGlobalRate(data.rates,"forfaitRoulage",year,i);
     const fEur = (forfaitMin/60)*tarif;
     const revCdb = (act.heures||0)*tarif;
     const revDc = (act.heuresDc||0)*tarif;
+    const revDec = (act.heuresDecouverte||0)*tDec;
+    const revInit = (act.heuresInitiation||0)*tInit;
+    const revBia = (act.heuresBia||0)*tBia;
     const revRoulage = (act.rotations||0)*fEur;
-    const total = revCdb + revDc;
-    return { i, act, tarif, forfaitMin, revCdb, revDc, revRoulage, total };
+    const total = revCdb + revDc + revDec + revInit + revBia;
+    return { i, act, tarif, tDec, tInit, tBia, forfaitMin, revCdb, revDc, revDec, revInit, revBia, revRoulage, total };
   });
 
   // Totals
-  const tot = { hCdb:0, hDc:0, rotations:0, revCdb:0, revDc:0, revRoulage:0, total:0 };
+  const tot = { hCdb:0, hDc:0, hDec:0, hInit:0, hBia:0, rotations:0, litres:0, revCdb:0, revDc:0, revDec:0, revInit:0, revBia:0, revRoulage:0, total:0 };
   rows.forEach(r => {
-    tot.hCdb += r.act.heures||0; tot.hDc += r.act.heuresDc||0; tot.rotations += r.act.rotations||0;
-    tot.revCdb += r.revCdb; tot.revDc += r.revDc; tot.revRoulage += r.revRoulage; tot.total += r.total;
+    tot.hCdb += r.act.heures||0; tot.hDc += r.act.heuresDc||0;
+    tot.hDec += r.act.heuresDecouverte||0; tot.hInit += r.act.heuresInitiation||0; tot.hBia += r.act.heuresBia||0;
+    tot.rotations += r.act.rotations||0; tot.litres += r.act.litresCarburant||0;
+    tot.revCdb += r.revCdb; tot.revDc += r.revDc;
+    tot.revDec += r.revDec; tot.revInit += r.revInit; tot.revBia += r.revBia;
+    tot.revRoulage += r.revRoulage; tot.total += r.total;
   });
 
   const periodLabel = range.length === 12 ? `${year}` : `${MOS[range[0]]}–${MOS[range[range.length-1]]} ${year}`;
@@ -320,27 +331,34 @@ function Activity({ data, db, year, range }) {
     <div className="chips">{data.aircraft.map(a => <button key={a.id} className={`chip ${acId===a.id?"on":""}`} onClick={() => setAcId(a.id)}>{a.immat} — {a.type}</button>)}</div>
     <div className="card">
       <div className="card-h"><h2>Activité <span className="badge">{data.aircraft.find(a=>a.id===acId)?.immat} · {periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Heures au format H:MM (ex: 2:30 = 2h30). Validez avec Tab ou Entrée.</p>
-      <div className="tw"><table>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Heures au format H:MM (ex: 2:30 = 2h30). Litres carburant : si renseigné, remplace le calcul conso×heures. Validez avec Tab ou Entrée.</p>
+      <div className="tw" style={{overflowX:"auto"}}><table>
         <thead><tr>
           <th>Mois</th>
-          <th style={{color:"var(--accent)"}}>H. CdB</th>
-          <th style={{color:"var(--orange)"}}>H. DC</th>
+          <th style={{color:"var(--accent)"}}>CdB</th>
+          <th style={{color:"var(--orange)"}}>DC</th>
+          <th style={{color:"var(--purple)"}}>Découv.</th>
+          <th style={{color:"var(--purple)"}}>Initi.</th>
+          <th style={{color:"var(--purple)"}}>BIA</th>
           <th>Mvts</th>
-          <th>Tarif</th><th>Roulage</th>
-          <th>Rev. CdB</th><th>Rev. DC</th><th>dont Roulage</th><th>Revenu total</th>
+          <th>Litres</th>
+          <th>Rev. Pilotes</th><th>Rev. Découv.</th><th>Rev. Init.</th><th>Rev. BIA</th>
+          <th>Revenu total</th>
         </tr></thead>
         <tbody>{rows.map(r => (
           <tr key={`${acId}-${r.i}`}>
             <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
-            <td><HMInput value={r.act.heures} onChange={v=>save(r.i,r.act,"heures",v)} style={{...inpSt,width:70}}/></td>
-            <td><HMInput value={r.act.heuresDc} onChange={v=>save(r.i,r.act,"heuresDc",v)} style={{...inpSt,width:70,borderColor:"var(--orange-s)"}}/></td>
-            <td><input type="number" step="1" min="0" value={r.act.rotations||""} placeholder="0" onChange={e=>save(r.i,r.act,"rotations",e.target.value)} style={{...inpSt,width:55}}/></td>
-            <td className="num" style={{color:"var(--text3)",fontSize:12}}>{r.tarif>0?fmt2(r.tarif):"—"}</td>
-            <td className="num" style={{color:"var(--text3)",fontSize:12}}>{r.forfaitMin>0?r.forfaitMin+"min":"—"}</td>
-            <td className="num" style={{color:"var(--accent)"}}>{r.revCdb>0?fmt(r.revCdb):"—"}</td>
-            <td className="num" style={{color:"var(--orange)"}}>{r.revDc>0?fmt(r.revDc):"—"}</td>
-            <td className="num" style={{color:"var(--purple)",fontSize:12}}>{r.revRoulage>0?fmt(r.revRoulage):"—"}</td>
+            <td><HMInput value={r.act.heures} onChange={v=>saveHM(r.i,"heures",v)} style={{...inpSt,width:65}}/></td>
+            <td><HMInput value={r.act.heuresDc} onChange={v=>saveHM(r.i,"heuresDc",v)} style={{...inpSt,width:65,borderColor:"var(--orange-s)"}}/></td>
+            <td><HMInput value={r.act.heuresDecouverte} onChange={v=>saveHM(r.i,"heuresDecouverte",v)} style={{...inpSt,width:65}}/></td>
+            <td><HMInput value={r.act.heuresInitiation} onChange={v=>saveHM(r.i,"heuresInitiation",v)} style={{...inpSt,width:65}}/></td>
+            <td><HMInput value={r.act.heuresBia} onChange={v=>saveHM(r.i,"heuresBia",v)} style={{...inpSt,width:65}}/></td>
+            <td><input type="number" step="1" min="0" value={r.act.rotations||""} placeholder="0" onChange={e=>save(r.i,"rotations",e.target.value)} style={{...inpSt,width:55}}/></td>
+            <td><input type="number" step="0.1" min="0" value={r.act.litresCarburant||""} placeholder="0" onChange={e=>save(r.i,"litresCarburant",e.target.value)} style={{...inpSt,width:65}}/></td>
+            <td className="num" style={{color:"var(--accent)"}}>{(r.revCdb+r.revDc)>0?fmt(r.revCdb+r.revDc):"—"}</td>
+            <td className="num" style={{color:"var(--purple)"}}>{r.revDec>0?fmt(r.revDec):"—"}</td>
+            <td className="num" style={{color:"var(--purple)"}}>{r.revInit>0?fmt(r.revInit):"—"}</td>
+            <td className="num" style={{color:"var(--purple)"}}>{r.revBia>0?fmt(r.revBia):"—"}</td>
             <td className="num" style={{fontWeight:700,color:"var(--accent)"}}>{r.total>0?fmt(r.total):"—"}</td>
           </tr>
         ))}</tbody>
@@ -348,11 +366,15 @@ function Activity({ data, db, year, range }) {
           <td className="tx" style={{fontWeight:800,fontSize:13,letterSpacing:.5,padding:"14px 12px"}}>TOTAL</td>
           <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{fH(tot.hCdb)}</td>
           <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hDc)}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hDec)}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hInit)}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hBia)}</td>
           <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{tot.rotations}</td>
-          <td colSpan={2} style={{padding:"14px 12px",color:"var(--text3)",fontSize:11,fontStyle:"italic"}}>Total période</td>
-          <td className="num" style={{color:"var(--accent)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revCdb)}</td>
-          <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revDc)}</td>
-          <td className="num" style={{color:"var(--purple)",fontSize:12,padding:"14px 12px"}}>{fmt(tot.revRoulage)}</td>
+          <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{tot.litres>0?Math.round(tot.litres)+" L":"—"}</td>
+          <td className="num" style={{color:"var(--accent)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revCdb+tot.revDc)}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revDec)}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revInit)}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revBia)}</td>
           <td className="num" style={{fontWeight:800,color:"var(--accent)",fontSize:15,padding:"14px 12px"}}>{fmt(tot.total)}</td>
         </tr></tfoot>
       </table></div>
@@ -537,7 +559,7 @@ function Ops({ data, db, year, modal, setModal }) {
             return (<tr key={o.id}>
               <td className="tx">{fmtDate(opDateOf(o))}</td>
               <td className="tx" style={{color:"var(--accent)",fontWeight:600}}>{ac?.immat||"?"}</td>
-              <td><span className={`tag ${o.type==="maintenance"?"tag-o":o.type==="arret"?"tag-r":"tag-p"}`}>{o.type==="maintenance"?"MAINT.":o.type==="arret"?"ARRÊT":"AUTRE"}</span></td>
+              <td><span className={`tag ${o.type==="maintenance"?"tag-o":o.type==="arret"?"tag-r":o.type==="assurance"?"tag-a":o.type==="carburant"?"tag-c":o.type==="huile"?"tag-h":o.type==="pret"?"tag-l":"tag-p"}`}>{({maintenance:"MAINT.",arret:"ARRÊT",assurance:"ASSUR.",carburant:"CARBU.",huile:"HUILE",pret:"PRÊT",autre:"AUTRE"})[o.type]||o.type.toUpperCase()}</span></td>
               <td className="tx">{o.label}</td>
               <td className="tx" style={{color:"var(--text3)",fontSize:12}}>{o.desc||""}</td>
               <td className="num" style={{color:"var(--red)",fontWeight:600}}>{fmt(o.cost)}</td>
@@ -557,7 +579,15 @@ function Ops({ data, db, year, modal, setModal }) {
       <div className="mod-b">
         <div className="fg" style={{marginBottom:14}}>
           <div className="fi"><label>Avion</label><select value={form.acId} onChange={e=>setForm(f=>({...f,acId:e.target.value}))}>{data.aircraft.map(a=><option key={a.id} value={a.id}>{a.immat}</option>)}</select></div>
-          <div className="fi"><label>Type</label><select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}><option value="maintenance">Maintenance</option><option value="arret">Arrêt avion</option><option value="autre">Autre</option></select></div>
+          <div className="fi"><label>Type</label><select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}>
+            <option value="maintenance">Maintenance</option>
+            <option value="assurance">Assurance (trimestre)</option>
+            <option value="carburant">Carburant (annuel ou facture)</option>
+            <option value="huile">Huile (annuel ou facture)</option>
+            <option value="pret">Prêt / Amortissement</option>
+            <option value="arret">Arrêt avion</option>
+            <option value="autre">Autre</option>
+          </select></div>
         </div>
         <div className="fg" style={{marginBottom:14}}>
           <div className="fi"><label>Date facture</label><input type="date" value={form.opDate} onChange={e=>setForm(f=>({...f,opDate:e.target.value}))}/></div>
@@ -826,9 +856,10 @@ function Simulation({ data, year, range }) {
           <thead><tr><th>Poste</th><th>Actuel</th><th>Projeté</th><th>Delta</th></tr></thead>
           <tbody>
             {[
-              {l:"Rev. CdB",a:cur.revenuVolCdb,p:proj.revenuVolCdb},
-              {l:"Rev. DC",a:cur.revenuVolDc,p:proj.revenuVolDc},
-              {l:"dont Roulage (indicateur)",a:cur.revenuRoulage,p:proj.revenuRoulage},
+              {l:"Rev. Pilotes (CdB+DC)",a:(cur.revenuVolCdb||0)+(cur.revenuVolDc||0),p:(proj.revenuVolCdb||0)+(proj.revenuVolDc||0)},
+              {l:"Rev. Découverte",a:cur.revenuDecouverte||0,p:proj.revenuDecouverte||0},
+              {l:"Rev. Initiation",a:cur.revenuInitiation||0,p:proj.revenuInitiation||0},
+              {l:"Rev. BIA",a:cur.revenuBia||0,p:proj.revenuBia||0},
               {l:"Revenus total",a:cur.revenu,p:proj.revenu},
               {l:"Coûts fixes",a:cur.fixe,p:proj.fixe},
               {l:"Coûts variables",a:cur.variable,p:proj.variable},{l:"Prêts",a:cur.loan,p:proj.loan},
@@ -1080,7 +1111,7 @@ function ImportCSV({ data, db }) {
     for (const row of agg.monthly) {
       const acId = immatMap[row.immat];
       if (!acId) { skipped++; continue; }
-      await db.setMonthly(acId, row.year, row.month, row.heures, row.rotations, row.heuresDc);
+      await db.setMonthly(acId, row.year, row.month, { heures: row.heures, rotations: row.rotations, heuresDc: row.heuresDc });
       imported++;
     }
 
