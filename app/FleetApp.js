@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
 import { useFleetData } from "../lib/useFleetData";
-import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, revenuePerHour, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, isBlockBlock, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
+import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, isBlockBlock, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
 import { parseFlightCSV, aggregateFlights } from "../lib/csvImport";
 
 export default function FleetApp({ onLogout }) {
@@ -75,60 +75,81 @@ export default function FleetApp({ onLogout }) {
 
 // ════════ DASHBOARD ════════
 function Dashboard({ data, year, range }) {
-  const g = globAgg(data, year, range);
-  const gPrev = globAgg(data, year - 1, range);
-  const revH = revenuePerHour(g);
+  const [viewAcId, setViewAcId] = useState(null); // null = overview, else focused aircraft
   const periodLabel = range.length === 12 ? `${year}` : `${MOS[range[0]]}–${MOS[range[range.length-1]]} ${year}`;
 
   if (!data.aircraft.length) return <div className="card"><div className="empty">Commencez par ajouter vos avions dans l&apos;onglet <strong>Flotte</strong>.</div></div>;
 
-  // Per-aircraft data sorted by profitability (only active aircraft for this year)
   const activeAc = data.aircraft.filter(ac => isAircraftActiveYear(ac, year, range));
+  const focused = viewAcId ? data.aircraft.find(a => a.id === viewAcId) : null;
+
+  const selector = (
+    <div className="chips">
+      <button className={`chip ${viewAcId===null?"on":""}`} onClick={() => setViewAcId(null)}>Vue d&apos;ensemble</button>
+      {activeAc.map(ac => <button key={ac.id} className={`chip ${viewAcId===ac.id?"on":""}`} onClick={() => setViewAcId(ac.id)}>{ac.immat}</button>)}
+    </div>
+  );
+
+  return (
+    <div>
+      {selector}
+      {focused
+        ? <DashboardDetail data={data} ac={focused} year={year} range={range} periodLabel={periodLabel}/>
+        : <DashboardOverview data={data} activeAc={activeAc} year={year} range={range} periodLabel={periodLabel} onSelectAc={setViewAcId}/>}
+    </div>
+  );
+}
+
+function DashboardOverview({ data, activeAc, year, range, periodLabel, onSelectAc }) {
+  const g = globAgg(data, year, range);
+  const gPrev = globAgg(data, year - 1, range);
   const acData = activeAc.map(ac => ({ ac, f: aggAC(data, ac.id, year, range), fPrev: aggAC(data, ac.id, year - 1, range) })).sort((a,b) => b.f.resultat - a.f.resultat);
   const best = acData[0];
   const worst = acData[acData.length - 1];
   const maxAbs = Math.max(1, ...acData.map(x => Math.abs(x.f.resultat)));
+  const hasPrev = gPrev.revenu > 0 || gPrev.heures > 0;
 
-  // Delta helper
-  const dFmt = (cur, prev) => { const d = cur - prev; return d === 0 ? null : { val: d, txt: (d>0?"+":"") + fmt(d), cls: d>0?"delta-up":"delta-dn" }; };
+  const deltaBadge = (cur, prev) => {
+    const d = cur - prev;
+    return <span className={`delta ${d>=0?"delta-up":"delta-dn"}`}>{d>=0?"+":""}{fmt(d)}</span>;
+  };
 
   return (
     <div>
-      {/* ── KPI Cards ── */}
+      {/* 3 KPI cards — simplifiés */}
       <div className="sg">
-        <div className="sc"><div className="sc-l">REVENUS</div><div className="sc-v b">{fmt(g.revenu)}</div><div className="sc-s">Pilotes {fmt((g.revenuVolCdb||0)+(g.revenuVolDc||0))} · Découv./Init./BIA {fmt((g.revenuDecouverte||0)+(g.revenuInitiation||0)+(g.revenuBia||0))}</div></div>
-        <div className="sc"><div className="sc-l">DÉPENSES</div><div className="sc-v o">{fmt(g.depenses)}</div><div className="sc-s">Récurrent {fmt(g.depensesNormales||g.depenses)}{(g.opsCExceptional||0)>0?` · Excep. ${fmt(g.opsCExceptional)}`:""}</div></div>
+        <div className="sc">
+          <div className="sc-l">REVENUS</div>
+          <div className="sc-v b">{fmt(g.revenu)}</div>
+          <div className="sc-s">{hasPrev ? <>vs {year-1} {deltaBadge(g.revenu, gPrev.revenu)}</> : `${fH(g.heures)} de vol`}</div>
+        </div>
+        <div className="sc">
+          <div className="sc-l">DÉPENSES</div>
+          <div className="sc-v o">{fmt(g.depenses)}</div>
+          <div className="sc-s">{(g.opsCExceptional||0)>0 ? <>dont excep. {fmt(g.opsCExceptional)}</> : (g.heures>0 ? <>{fmt2(g.depenses/g.heures)}/h</> : "—")}</div>
+        </div>
         <div className="sc hl" style={{borderColor:g.resultat>=0?"var(--green)":"var(--red)"}}>
-          <div className="sc-l" style={{color:g.resultat>=0?"var(--green)":"var(--red)"}}>{g.resultat>=0?"✓ BÉNÉFICE":"✗ DÉFICIT"}</div>
+          <div className="sc-l" style={{color:g.resultat>=0?"var(--green)":"var(--red)"}}>{g.resultat>=0 ? "✓ BÉNÉFICE" : "✗ DÉFICIT"}</div>
           <div className={`sc-v ${g.resultat>=0?"g":"r"}`}>{g.resultat>=0?"+":""}{fmt(g.resultat)}</div>
           <div className="sc-s">
-            Marge : {g.revenu>0?fP(g.resultat/g.revenu):"—"}
-            {(g.opsCExceptional||0)>0 && <span style={{marginLeft:8,color:"var(--text3)"}}>· hors excep. : {fmt(g.resultatRecurrent)}</span>}
-            {gPrev.revenu > 0 && (() => { const d = dFmt(g.resultat, gPrev.resultat); return d ? <span style={{marginLeft:8}} className={`delta ${d.cls}`}>vs {year-1} : {d.txt}</span> : null; })()}
+            Marge {g.revenu>0?fP(g.resultat/g.revenu):"—"}
+            {hasPrev && <> · vs {year-1} {deltaBadge(g.resultat, gPrev.resultat)}</>}
           </div>
         </div>
-        <div className="sc"><div className="sc-l">REVENU / HEURE</div><div className="sc-v b">{g.heures>0?fmt2(revH):"—"}</div><div className="sc-s">Coût/h : {g.heures>0?fmt2(g.depenses/g.heures):"—"}</div></div>
-        <div className="sc"><div className="sc-l">MARGE OPÉRATIONNELLE</div><div className={`sc-v ${g.resultat>=0?"g":"r"}`}>{g.revenu>0?fP(g.resultat/g.revenu):"—"}</div></div>
-        {g.loan > 0 && <div className="sc"><div className="sc-l">PRÊTS</div><div className="sc-v p">{fmt(g.loan)}</div></div>}
       </div>
 
-      {/* ── Synthèse CA ── */}
+      {/* Classement */}
       <div className="card">
         <div className="card-h">
-          <h2>Synthèse pour le CA <span className="badge">{periodLabel}</span></h2>
+          <h2>Classement par rentabilité <span className="badge">{periodLabel}</span></h2>
           <span className={`tag ${g.resultat>=0?"tag-g":"tag-r"}`} style={{fontSize:13,padding:"5px 14px"}}>{g.resultat>=0?"FLOTTE RENTABLE":"FLOTTE DÉFICITAIRE"}</span>
         </div>
         <div className="card-b">
-          <p style={{fontSize:13,color:"var(--text2)",marginBottom:16,lineHeight:1.6}}>
-            {best && worst && acData.length > 1
-              ? <>L&apos;avion le plus rentable est <strong style={{color:"var(--accent)"}}>{best.ac.immat}</strong> ({best.f.resultat>=0?"+":""}{fmt(best.f.resultat)}). L&apos;avion le plus coûteux est <strong style={{color:"var(--accent)"}}>{worst.ac.immat}</strong> ({worst.f.resultat>=0?"+":""}{fmt(worst.f.resultat)}).</>
-              : acData.length === 1
-              ? <>Un seul avion : <strong style={{color:"var(--accent)"}}>{best.ac.immat}</strong> — résultat : {best.f.resultat>=0?"+":""}{fmt(best.f.resultat)}.</>
-              : null
-            }
-          </p>
+          {acData.length > 1 && <p style={{fontSize:13,color:"var(--text2)",marginBottom:16,lineHeight:1.6}}>
+            Meilleur : <strong style={{color:"var(--accent)"}}>{best.ac.immat}</strong> ({best.f.resultat>=0?"+":""}{fmt(best.f.resultat)}) · Plus coûteux : <strong style={{color:"var(--accent)"}}>{worst.ac.immat}</strong> ({worst.f.resultat>=0?"+":""}{fmt(worst.f.resultat)})
+          </p>}
           {acData.map((x,i) => (
-            <div className="synth-row" key={x.ac.id}>
+            <div className="synth-row" key={x.ac.id} onClick={() => onSelectAc(x.ac.id)} style={{cursor:"pointer"}}>
               <div className="synth-rank">{i+1}</div>
               <div className="synth-immat">{x.ac.immat}</div>
               <div className="synth-bar-wrap">
@@ -140,104 +161,59 @@ function Dashboard({ data, year, range }) {
         </div>
       </div>
 
-      {/* ── Seuil de rentabilité ── */}
+      {/* Aircraft cards grid (replaces wide 13-col table) */}
       <div className="card">
-        <div className="card-h"><h2>Seuil de rentabilité <span className="badge">{periodLabel}</span></h2></div>
-        <div className="tw"><table>
-          <thead><tr><th>Avion</th><th>Type</th><th>Heures actuelles</th><th>Heures seuil</th><th>Marge (h)</th><th>Atteinte</th><th>Statut</th></tr></thead>
-          <tbody>{acData.map(({ac, f}) => {
-            const be = breakEvenHours(data, ac.id, year, range);
-            const beOk = be !== Infinity;
-            const margin = f.heures - be;
-            const pct = beOk && be > 0 ? f.heures / be : (f.heures > 0 ? 1 : 0);
-            const status = pct >= 1 ? "tag-g" : pct >= 0.7 ? "tag-o" : "tag-r";
-            const statusTxt = pct >= 1 ? "ATTEINT" : pct >= 0.7 ? "PROCHE" : "INSUFFISANT";
-            return (<tr key={ac.id}>
-              <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
-              <td className="tx">{ac.type}</td>
-              <td className="num">{fH(f.heures)}</td>
-              <td className="num">{beOk ? fH(be) : "N/A"}</td>
-              <td className={margin>=0?"pos":"neg"}>{beOk ? (margin>=0?"+":"") + fH(margin) : "—"}</td>
-              <td className="num">{beOk ? fP(pct) : "—"}</td>
-              <td><span className={`tag ${status}`}>{statusTxt}</span></td>
-            </tr>);
-          })}</tbody>
-        </table></div>
-      </div>
-
-      {/* ── Rentabilité par avion ── */}
-      <div className="card">
-        <div className="card-h"><h2>Rentabilité par avion <span className="badge">{periodLabel}</span></h2></div>
-        <div className="tw"><table>
-          <thead><tr><th>Avion</th><th>Type</th><th>H. Pilotes</th><th>H. Autres</th><th>Total h</th><th>Vols</th><th>Rev. Pilotes</th><th>Rev. Autres</th><th>Revenu total</th><th>Dépenses</th><th>Résultat</th><th>Coût/h</th><th>Verdict</th></tr></thead>
-          <tbody>{acData.map(({ac, f, fPrev}) => {
-            const ok = f.resultat >= 0;
-            const dRes = dFmt(f.resultat, fPrev.resultat);
-            const dH = f.heures - fPrev.heures;
-            const hAutres = (f.hDec||0) + (f.hInit||0) + (f.hBia||0);
-            const revAutres = (f.revenuDecouverte||0) + (f.revenuInitiation||0) + (f.revenuBia||0);
-            return (<>
-              <tr key={ac.id}>
-                <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
-                <td className="tx">{ac.type}</td>
-                <td className="num">{fH(f.heuresPilote||0)}</td>
-                <td className="num" style={{color:"var(--purple)"}}>{hAutres>0?fH(hAutres):"—"}</td>
-                <td className="num" style={{fontWeight:600}}>{fH(f.heures)}</td>
-                <td className="num">{f.rotations}</td>
-                <td className="num" style={{color:"var(--accent)"}}>{fmt(f.revenuPilote||0)}</td>
-                <td className="num" style={{color:"var(--purple)"}}>{revAutres>0?fmt(revAutres):"—"}</td>
-                <td className="num" style={{fontWeight:700}}>{fmt(f.revenu)}</td>
-                <td className="num">{fmt(f.depenses)}</td>
-                <td className={ok?"pos":"neg"}>{ok?"+":""}{fmt(f.resultat)}</td>
-                <td className="num">{f.heures>0?fmt2(f.coutH):"—"}</td>
-                <td><span className={`tag ${ok?"tag-g":"tag-r"}`}>{ok?"RENTABLE":"DÉFICIT"}</span></td>
-              </tr>
-              {(fPrev.heures > 0 || fPrev.revenu > 0) && <tr key={ac.id+"-cmp"} style={{background:"var(--bg)"}}>
-                <td colSpan={2} style={{fontSize:11,color:"var(--text3)",paddingTop:4,paddingBottom:4}}>vs {year-1}</td>
-                <td colSpan={3} className="num" style={{fontSize:11,color:dH>=0?"var(--green)":"var(--red)"}}>{dH>=0?"+":""}{dH.toFixed(1)}h total</td>
-                <td colSpan={4}></td>
-                <td colSpan={2} style={{fontSize:11}}>{dRes && <span className={`delta ${dRes.cls}`}>{dRes.txt}</span>}</td>
-                <td colSpan={2}></td>
-              </tr>}
-            </>);
-          })}</tbody>
-        </table></div>
-      </div>
-
-      {/* ── Décomposition des coûts ── */}
-      <div className="card">
-        <div className="card-h"><h2>Décomposition des coûts</h2></div>
+        <div className="card-h">
+          <h2>Détail par avion <span className="badge">{periodLabel}</span></h2>
+          <span style={{fontSize:11,color:"var(--text3)"}}>Cliquez pour voir les détails</span>
+        </div>
         <div className="card-b">
-          {acData.map(({ac, f}) => {
-            if (f.depenses === 0) return null;
-            const items = [
-              {l:"Coûts fixes",v:f.fixe,c:"#2563eb"},{l:"Carburant",v:f.carburant,c:"#d97706"},
-              {l:"Maintenance var.",v:f.variable-f.carburant,c:"#7c3aed"},
-              {l:"Prêts",v:f.loan,c:"#a78bfa"},{l:"Opérations",v:f.opsC,c:"#dc2626"},
-            ].filter(x => x.v > 0);
-            return (<div key={ac.id} style={{marginBottom:20}}>
-              <div style={{fontSize:14,fontWeight:700,marginBottom:10,color:"var(--accent)"}}>{ac.immat} — {ac.type}</div>
-              {items.map((it,i) => <div className="cb-row" key={i}>
-                <div className="cb-dot" style={{background:it.c}}/>
-                <div className="cb-label">{it.l}</div>
-                <div className="cb-bar-wrap"><div className="cb-bar" style={{width:`${(it.v/f.depenses*100).toFixed(1)}%`,background:it.c}}/></div>
-                <div className="cb-val">{fmt(it.v)}</div>
-                <div className="cb-pct">{fP(it.v/f.depenses)}</div>
-              </div>)}
-            </div>);
-          })}
+          <div className="ac-grid">
+            {acData.map(({ac, f, fPrev}) => {
+              const ok = f.resultat >= 0;
+              const dRes = f.resultat - fPrev.resultat;
+              const acHasPrev = fPrev.revenu > 0 || fPrev.heures > 0;
+              return (
+                <div key={ac.id} className={`ac-card ${ok?"ok":"bad"}`} onClick={() => onSelectAc(ac.id)}>
+                  <div className="ac-card-h">
+                    <div>
+                      <div className="ac-card-immat">{ac.immat}</div>
+                      <div className="ac-card-type">{ac.type}</div>
+                    </div>
+                    <span className={`tag ${ok?"tag-g":"tag-r"}`}>{ok?"RENTABLE":"DÉFICIT"}</span>
+                  </div>
+                  <div className="ac-card-grid">
+                    <div className="ac-card-stat"><div className="ac-card-stat-l">Heures</div><div className="ac-card-stat-v">{fH(f.heures)}</div></div>
+                    <div className="ac-card-stat"><div className="ac-card-stat-l">Mouvements</div><div className="ac-card-stat-v">{f.rotations}</div></div>
+                    <div className="ac-card-stat"><div className="ac-card-stat-l">Revenus</div><div className="ac-card-stat-v" style={{color:"var(--accent)"}}>{fmt(f.revenu)}</div></div>
+                    <div className="ac-card-stat"><div className="ac-card-stat-l">Dépenses</div><div className="ac-card-stat-v" style={{color:"var(--orange)"}}>{fmt(f.depenses)}</div></div>
+                  </div>
+                  <div className="ac-card-result">
+                    <div>
+                      <div className="ac-card-stat-l">Résultat</div>
+                      <div className="ac-card-result-v" style={{color:ok?"var(--green)":"var(--red)"}}>{ok?"+":""}{fmt(f.resultat)}</div>
+                    </div>
+                    {acHasPrev && <div style={{textAlign:"right"}}>
+                      <div className="ac-card-stat-l">vs {year-1}</div>
+                      <span className={`delta ${dRes>=0?"delta-up":"delta-dn"}`}>{dRes>=0?"+":""}{fmt(dRes)}</span>
+                    </div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      {/* ── Résultat mensuel ── */}
+      {/* Monthly result chart */}
       <div className="card">
         <div className="card-h"><h2>Résultat mensuel {year}</h2></div>
         <div className="card-b"><BarChart data={data} year={year}/></div>
       </div>
 
-      {/* ── Historique ── */}
+      {/* Historique (6 cols, fits without scroll) */}
       <div className="card">
-        <div className="card-h"><h2>Historique 2022 – 2026</h2></div>
+        <div className="card-h"><h2>Historique {YEARS[0]} – {YEARS[YEARS.length-1]}</h2></div>
         <div className="tw"><table>
           <thead><tr><th>Année</th><th>Heures</th><th>Revenus</th><th>Dépenses</th><th>Résultat</th><th>Marge</th></tr></thead>
           <tbody>{YEARS.map(y => {
@@ -257,8 +233,104 @@ function Dashboard({ data, year, range }) {
   );
 }
 
-function BarChart({ data, year }) {
-  const res = MOS.map((_,i) => { let r=0; data.aircraft.filter(ac => isAircraftActive(ac, year, i)).forEach(ac => { r += calcMonth(data,ac.id,year,i).resultat; }); return r; });
+function DashboardDetail({ data, ac, year, range, periodLabel }) {
+  const f = aggAC(data, ac.id, year, range);
+  const fPrev = aggAC(data, ac.id, year - 1, range);
+  const be = breakEvenHours(data, ac.id, year, range);
+  const beOk = be !== Infinity;
+  const beMargin = f.heures - be;
+  const bePct = beOk && be > 0 ? f.heures / be : (f.heures > 0 ? 1 : 0);
+  const hasPrev = fPrev.revenu > 0 || fPrev.heures > 0;
+  const ok = f.resultat >= 0;
+
+  const cmpCard = (label, cur, prev, fmtFn, colorCur) => {
+    const d = cur - prev;
+    const dCls = d >= 0 ? "delta-up" : "delta-dn";
+    return (<div className="cmp-card">
+      <div className="cmp-card-l">{label}</div>
+      <div className="cmp-card-v" style={{color:colorCur||"var(--text)"}}>{fmtFn(cur)}</div>
+      {hasPrev && <>
+        <div className="cmp-card-prev">{year-1} : {fmtFn(prev)}</div>
+        <span className={`cmp-card-delta ${dCls}`}>{d>=0?"+":""}{fmtFn(d)}</span>
+      </>}
+    </div>);
+  };
+
+  const costItems = [
+    {l:"Coûts fixes",v:f.fixe,c:"#2563eb"},
+    {l:"Carburant",v:f.carburant,c:"#d97706"},
+    {l:"Maintenance variable",v:(f.variable||0)-(f.carburant||0),c:"#7c3aed"},
+    {l:"Prêts",v:f.loan,c:"#a78bfa"},
+    {l:"Opérations",v:f.opsC,c:"#dc2626"},
+  ].filter(x => x.v > 0);
+
+  return (
+    <div>
+      {/* Header + comparison cards */}
+      <div className="card">
+        <div className="card-h">
+          <h2 style={{color:"var(--accent)"}}>{ac.immat} <span style={{color:"var(--text3)",fontWeight:400}}>— {ac.type}</span> <span className="badge">{periodLabel}</span></h2>
+          <span className={`tag ${ok?"tag-g":"tag-r"}`} style={{fontSize:13,padding:"5px 14px"}}>{ok?"RENTABLE":"DÉFICIT"}</span>
+        </div>
+        <div className="card-b">
+          <div className="cmp-grid">
+            {cmpCard("Revenus", f.revenu, fPrev.revenu, fmt, "var(--accent)")}
+            {cmpCard("Dépenses", f.depenses, fPrev.depenses, fmt, "var(--orange)")}
+            {cmpCard("Résultat", f.resultat, fPrev.resultat, fmt, ok?"var(--green)":"var(--red)")}
+            {cmpCard("Heures", f.heures, fPrev.heures, fH, "var(--text)")}
+          </div>
+        </div>
+      </div>
+
+      {/* Break-even */}
+      <div className="card">
+        <div className="card-h"><h2>Seuil de rentabilité</h2></div>
+        <div className="card-b">
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:14}}>
+            <div className="cmp-card"><div className="cmp-card-l">Heures actuelles</div><div className="cmp-card-v">{fH(f.heures)}</div></div>
+            <div className="cmp-card"><div className="cmp-card-l">Heures seuil</div><div className="cmp-card-v">{beOk ? fH(be) : "N/A"}</div></div>
+            <div className="cmp-card"><div className="cmp-card-l">Marge</div><div className="cmp-card-v" style={{color:beMargin>=0?"var(--green)":"var(--red)"}}>{beOk ? (beMargin>=0?"+":"") + fH(beMargin) : "—"}</div></div>
+            <div className="cmp-card"><div className="cmp-card-l">Atteinte</div><div className="cmp-card-v">{beOk ? fP(bePct) : "—"}</div></div>
+          </div>
+          {beOk && <div style={{marginTop:16,height:12,background:"var(--bg3)",borderRadius:6,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${Math.min(100,bePct*100)}%`,background:bePct>=1?"var(--green)":bePct>=0.7?"var(--orange)":"var(--red)",borderRadius:6,transition:"width .3s"}}/>
+          </div>}
+        </div>
+      </div>
+
+      {/* Cost decomposition */}
+      {costItems.length > 0 && <div className="card">
+        <div className="card-h"><h2>Décomposition des dépenses</h2></div>
+        <div className="card-b">
+          {costItems.map((it,i) => <div className="cb-row" key={i}>
+            <div className="cb-dot" style={{background:it.c}}/>
+            <div className="cb-label">{it.l}</div>
+            <div className="cb-bar-wrap"><div className="cb-bar" style={{width:`${(it.v/f.depenses*100).toFixed(1)}%`,background:it.c}}/></div>
+            <div className="cb-val">{fmt(it.v)}</div>
+            <div className="cb-pct">{fP(it.v/f.depenses)}</div>
+          </div>)}
+        </div>
+      </div>}
+
+      {/* Monthly evolution for this aircraft */}
+      <div className="card">
+        <div className="card-h"><h2>Résultat mensuel {year} — {ac.immat}</h2></div>
+        <div className="card-b"><BarChart data={data} year={year} acId={ac.id}/></div>
+      </div>
+    </div>
+  );
+}
+
+function BarChart({ data, year, acId }) {
+  const res = MOS.map((_,i) => {
+    if (acId) {
+      const ac = data.aircraft.find(a => a.id === acId);
+      return ac && isAircraftActive(ac, year, i) ? calcMonth(data, acId, year, i).resultat : 0;
+    }
+    let r = 0;
+    data.aircraft.filter(ac => isAircraftActive(ac, year, i)).forEach(ac => { r += calcMonth(data,ac.id,year,i).resultat; });
+    return r;
+  });
   const mx = Math.max(1,...res.map(Math.abs));
   return (<div className="bc">{MOS.map((m,i) => {
     const v = res[i]; const h = Math.max(4,(Math.abs(v)/mx)*140);

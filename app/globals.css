@@ -152,6 +152,31 @@ td.tx { font-weight:500; } td.num { font-variant-numeric:tabular-nums; }
 /* Virtual aircraft form */
 .vac-form { background:var(--bg); border:1px solid var(--border); border-radius:var(--r); padding:16px; margin-top:12px; }
 
+/* Dashboard aircraft cards */
+.ac-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:14px; }
+.ac-card { background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:18px; box-shadow:var(--shadow); transition:.15s; cursor:pointer; }
+.ac-card:hover { border-color:var(--accent); transform:translateY(-1px); box-shadow:0 4px 12px rgba(0,0,0,.08); }
+.ac-card.ok { border-left:4px solid var(--green); }
+.ac-card.bad { border-left:4px solid var(--red); }
+.ac-card-h { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; gap:8px; }
+.ac-card-immat { font-size:18px; font-weight:800; color:var(--accent); letter-spacing:-.3px; }
+.ac-card-type { font-size:11px; color:var(--text3); font-weight:500; }
+.ac-card-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; }
+.ac-card-stat { display:flex; flex-direction:column; gap:2px; }
+.ac-card-stat-l { font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:600; letter-spacing:.3px; }
+.ac-card-stat-v { font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
+.ac-card-result { margin-top:14px; padding-top:12px; border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+.ac-card-result-v { font-size:20px; font-weight:800; letter-spacing:-.5px; font-variant-numeric:tabular-nums; }
+.ac-card-delta { font-size:11px; color:var(--text3); margin-top:2px; }
+
+/* Detail view comparison */
+.cmp-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); gap:14px; margin-bottom:20px; }
+.cmp-card { background:var(--bg); border:1px solid var(--border); border-radius:var(--r); padding:16px; }
+.cmp-card-l { font-size:11px; color:var(--text3); font-weight:600; text-transform:uppercase; letter-spacing:.3px; margin-bottom:6px; }
+.cmp-card-v { font-size:22px; font-weight:800; letter-spacing:-.5px; font-variant-numeric:tabular-nums; }
+.cmp-card-prev { font-size:11px; color:var(--text3); margin-top:4px; }
+.cmp-card-delta { font-size:11px; font-weight:700; padding:2px 8px; border-radius:6px; display:inline-block; margin-top:4px; }
+
 @media (max-width:640px) {
   .app { padding:12px; }
   .hdr h1 { font-size:17px; } .hdr h1 span { display:none; }
