@@ -43,9 +43,12 @@ CREATE TABLE monthly (
   heures_initiation NUMERIC DEFAULT 0, -- vols d'initiation
   heures_bia NUMERIC DEFAULT 0,        -- vols BIA
   litres_carburant NUMERIC DEFAULT 0,  -- litres carburant réels (sinon calc via conso)
-  vols_dec_1pax INT DEFAULT 0,         -- nb vols baptême avec 1 passager
-  vols_dec_2pax INT DEFAULT 0,         -- nb vols baptême avec 2 passagers
-  vols_dec_3pax INT DEFAULT 0,         -- nb vols baptême avec 3 passagers
+  vols_decouverte INT DEFAULT 0,        -- nb vols découverte/baptême
+  vols_initiation INT DEFAULT 0,       -- nb vols initiation
+  vols_bia INT DEFAULT 0,              -- nb vols BIA
+  revenu_decouverte NUMERIC DEFAULT 0, -- revenu saisi (tarifs multiples → saisie directe)
+  revenu_initiation NUMERIC DEFAULT 0, -- revenu saisi
+  revenu_bia NUMERIC DEFAULT 0,        -- revenu saisi
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(ac_id, year, month)
 );
@@ -55,9 +58,19 @@ ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_decouverte NUMERIC DEFAULT 0
 ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_initiation NUMERIC DEFAULT 0;
 ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_bia NUMERIC DEFAULT 0;
 ALTER TABLE monthly ADD COLUMN IF NOT EXISTS litres_carburant NUMERIC DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_dec_1pax INT DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_dec_2pax INT DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_dec_3pax INT DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_decouverte INT DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_initiation INT DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_bia INT DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS revenu_decouverte NUMERIC DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS revenu_initiation NUMERIC DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS revenu_bia NUMERIC DEFAULT 0;
+-- Migrate old per-pax columns → total vols
+UPDATE monthly SET vols_decouverte = COALESCE(vols_dec_1pax,0)+COALESCE(vols_dec_2pax,0)+COALESCE(vols_dec_3pax,0)
+  WHERE vols_decouverte = 0
+    AND (COALESCE(vols_dec_1pax,0)+COALESCE(vols_dec_2pax,0)+COALESCE(vols_dec_3pax,0)) > 0;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_dec_1pax;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_dec_2pax;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_dec_3pax;
 
 -- Loans
 CREATE TABLE loans (
