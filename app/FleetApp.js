@@ -1,9 +1,9 @@
 "use client";
 import { useState, useMemo } from "react";
 import { useFleetData } from "../lib/useFleetData";
-import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, isBlockBlock, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
+import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
 import { parseFlightCSV, aggregateFlights } from "../lib/csvImport";
-import { parseOpsCSV } from "../lib/csvOpsImport";
+import { parseOpsXLSX } from "../lib/xlsxOpsImport";
 
 export default function FleetApp({ onLogout }) {
   const db = useFleetData();
@@ -258,9 +258,8 @@ function DashboardDetail({ data, ac, year, range, periodLabel }) {
   };
 
   const costItems = [
-    {l:"Coûts fixes",v:f.fixe,c:"#2563eb"},
     {l:"Carburant",v:f.carburant,c:"#d97706"},
-    {l:"Maintenance variable",v:(f.variable||0)-(f.carburant||0),c:"#7c3aed"},
+    {l:"Huile",v:(f.variable||0)-(f.carburant||0),c:"#7c3aed"},
     {l:"Prêts",v:f.loan,c:"#a78bfa"},
     {l:"Opérations",v:f.opsC,c:"#dc2626"},
   ].filter(x => x.v > 0);
@@ -368,23 +367,19 @@ function Activity({ data, db, year, range }) {
 
   const rows = range.map(i => {
     const act = getActivity(data,acId,year,i);
-    const tarif = getRate(data.rates,acId,"tarifHeure",year,i);
-    const revPilotes = ((act.heures||0) + (act.heuresDc||0)) * tarif;
-    const revDec = act.revenuDecouverte || 0;
-    const revInit = act.revenuInitiation || 0;
-    const revBia = act.revenuBia || 0;
-    const total = revPilotes + revDec + revInit + revBia;
-    return { i, act, tarif, revPilotes, revDec, revInit, revBia, total };
+    const c = calcMonth(data,acId,year,i);
+    return { i, act, c };
   });
 
-  const tot = { hCdb:0, hDc:0, hDec:0, hInit:0, hBia:0, mvts:0, litres:0, volsDec:0, volsInit:0, volsBia:0, revPilotes:0, revDec:0, revInit:0, revBia:0, total:0 };
+  const tot = { hCdb:0, hDc:0, hDec:0, hInit:0, hBia:0, mvts:0, litres:0, d1:0, d2:0, d3:0, volsDec:0, volsInit:0, volsBia:0, revPilotes:0, revDec:0, revInit:0, revBia:0, total:0 };
   rows.forEach(r => {
     const a = r.act;
     tot.hCdb += a.heures||0; tot.hDc += a.heuresDc||0; tot.hDec += a.heuresDecouverte||0;
     tot.hInit += a.heuresInitiation||0; tot.hBia += a.heuresBia||0;
     tot.mvts += a.rotations||0; tot.litres += a.litresCarburant||0;
-    tot.volsDec += a.volsDecouverte||0; tot.volsInit += a.volsInitiation||0; tot.volsBia += a.volsBia||0;
-    tot.revPilotes += r.revPilotes; tot.revDec += r.revDec; tot.revInit += r.revInit; tot.revBia += r.revBia; tot.total += r.total;
+    tot.d1 += a.volsDec1pax||0; tot.d2 += a.volsDec2pax||0; tot.d3 += a.volsDec3pax||0;
+    tot.volsDec += r.c.volsDecouverte; tot.volsInit += a.volsInitiation||0; tot.volsBia += a.volsBia||0;
+    tot.revPilotes += r.c.revenuPilote; tot.revDec += r.c.revenuDecouverte; tot.revInit += r.c.revenuInitiation; tot.revBia += r.c.revenuBia; tot.total += r.c.revenu;
   });
 
   const periodLabel = range.length === 12 ? `${year}` : `${MOS[range[0]]}–${MOS[range[range.length-1]]} ${year}`;
@@ -416,7 +411,7 @@ function Activity({ data, db, year, range }) {
             <td><HMInput value={r.act.heuresDecouverte} onChange={v=>saveHM(r.i,"heuresDecouverte",v)} style={inpSm}/></td>
             <td><HMInput value={r.act.heuresInitiation} onChange={v=>saveHM(r.i,"heuresInitiation",v)} style={inpSm}/></td>
             <td><HMInput value={r.act.heuresBia} onChange={v=>saveHM(r.i,"heuresBia",v)} style={inpSm}/></td>
-            <td><input type="number" step="1" min="0" value={r.act.rotations||""} placeholder="0" onChange={e=>save(r.i,"rotations",e.target.value)} style={inpN}/></td>
+            <td><input type="number" step="1" min="0" value={r.act.rotations||""} placeholder="0" onChange={e=>save(r.i,"rotations",e.target.value)} style={{...inpSt,width:60,textAlign:"center",fontWeight:600}}/></td>
             <td><input type="number" step="0.1" min="0" value={r.act.litresCarburant||""} placeholder="0" onChange={e=>save(r.i,"litresCarburant",e.target.value)} style={inpSm}/></td>
           </tr>
         ))}</tbody>
@@ -433,48 +428,67 @@ function Activity({ data, db, year, range }) {
       </table></div>
     </div>
 
-    {/* ── Table 2 : Revenus vols spéciaux ── */}
+    {/* ── Table 2 : Revenus ── */}
     <div className="card">
       <div className="card-h"><h2>Revenus <span className="badge">{periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Rev. Pilotes = (CdB+DC) × tarif, calculé auto. Découverte / Initiation / BIA : saisie directe (nb vols + revenu total).</p>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Pilotes = (CdB+DC) × tarif. Découverte = nb vols × tarif par catégorie pax (tarifs dans Tarifs & Coûts). Initiation = nb vols × tarif. BIA = revenu total saisi.</p>
       <div className="tw"><table>
         <thead><tr>
           <th>Mois</th>
-          <th style={{color:"var(--accent)"}}>Rev. Pilotes</th>
-          <th style={{color:"var(--purple)"}}>Déc. vols</th>
-          <th style={{color:"var(--purple)"}}>Déc. €</th>
-          <th style={{color:"var(--purple)"}}>Init. vols</th>
-          <th style={{color:"var(--purple)"}}>Init. €</th>
-          <th style={{color:"var(--purple)"}}>BIA vols</th>
-          <th style={{color:"var(--purple)"}}>BIA €</th>
-          <th>Revenu total</th>
+          <th style={{color:"var(--accent)"}}>Pilotes €</th>
+          <th style={{color:"#8b5cf6"}}>Déc. 1pax</th>
+          <th style={{color:"#8b5cf6"}}>Déc. 2pax</th>
+          <th style={{color:"#8b5cf6"}}>Déc. 3pax</th>
+          <th style={{color:"#8b5cf6"}}>Déc. €</th>
+          <th style={{color:"var(--orange)"}}>Init. vols</th>
+          <th style={{color:"var(--orange)"}}>Init. €</th>
+          <th style={{color:"var(--green)"}}>BIA vols</th>
+          <th style={{color:"var(--green)"}}>BIA €</th>
+          <th>Total</th>
         </tr></thead>
         <tbody>{rows.map(r => (
           <tr key={`r-${acId}-${r.i}`}>
             <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
-            <td className="num" style={{color:"var(--accent)"}}>{r.revPilotes>0?fmt(r.revPilotes):"—"}</td>
-            <td><input type="number" min="0" step="1" value={r.act.volsDecouverte||""} placeholder="0" onChange={e=>save(r.i,"volsDecouverte",e.target.value)} style={inpN}/></td>
-            <td><input type="number" min="0" step="1" value={r.act.revenuDecouverte||""} placeholder="0" onChange={e=>save(r.i,"revenuDecouverte",e.target.value)} style={{...inpSt,width:80}}/></td>
+            <td className="num" style={{color:"var(--accent)"}}>{r.c.revenuPilote>0?fmt(r.c.revenuPilote):"—"}</td>
+            <td><input type="number" min="0" step="1" value={r.act.volsDec1pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec1pax",e.target.value)} style={inpN}/></td>
+            <td><input type="number" min="0" step="1" value={r.act.volsDec2pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec2pax",e.target.value)} style={inpN}/></td>
+            <td><input type="number" min="0" step="1" value={r.act.volsDec3pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec3pax",e.target.value)} style={inpN}/></td>
+            <td className="num" style={{color:"#8b5cf6",fontWeight:600,fontSize:12}}>{r.c.revenuDecouverte>0?fmt(r.c.revenuDecouverte):"—"}</td>
             <td><input type="number" min="0" step="1" value={r.act.volsInitiation||""} placeholder="0" onChange={e=>save(r.i,"volsInitiation",e.target.value)} style={inpN}/></td>
-            <td><input type="number" min="0" step="1" value={r.act.revenuInitiation||""} placeholder="0" onChange={e=>save(r.i,"revenuInitiation",e.target.value)} style={{...inpSt,width:80}}/></td>
+            <td className="num" style={{color:"var(--orange)",fontWeight:600,fontSize:12}}>{r.c.revenuInitiation>0?fmt(r.c.revenuInitiation):"—"}</td>
             <td><input type="number" min="0" step="1" value={r.act.volsBia||""} placeholder="0" onChange={e=>save(r.i,"volsBia",e.target.value)} style={inpN}/></td>
             <td><input type="number" min="0" step="1" value={r.act.revenuBia||""} placeholder="0" onChange={e=>save(r.i,"revenuBia",e.target.value)} style={{...inpSt,width:80}}/></td>
-            <td className="num" style={{fontWeight:700,color:"var(--accent)"}}>{r.total>0?fmt(r.total):"—"}</td>
+            <td className="num" style={{fontWeight:700,color:"var(--accent)"}}>{r.c.revenu>0?fmt(r.c.revenu):"—"}</td>
           </tr>
         ))}</tbody>
         <tfoot><tr style={{borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"}}>
           <td className="tx" style={{fontWeight:800,fontSize:13,letterSpacing:.5,padding:"14px 12px"}}>TOTAL</td>
           <td className="num" style={{color:"var(--accent)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revPilotes)}</td>
-          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{tot.volsDec||"—"}</td>
-          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revDec)}</td>
-          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{tot.volsInit||"—"}</td>
-          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revInit)}</td>
-          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{tot.volsBia||"—"}</td>
-          <td className="num" style={{color:"var(--purple)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revBia)}</td>
+          <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{tot.d1||"—"}</td>
+          <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{tot.d2||"—"}</td>
+          <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{tot.d3||"—"}</td>
+          <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revDec)}</td>
+          <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{tot.volsInit||"—"}</td>
+          <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revInit)}</td>
+          <td className="num" style={{color:"var(--green)",fontWeight:700,padding:"14px 12px"}}>{tot.volsBia||"—"}</td>
+          <td className="num" style={{color:"var(--green)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revBia)}</td>
           <td className="num" style={{fontWeight:800,color:"var(--accent)",fontSize:15,padding:"14px 12px"}}>{fmt(tot.total)}</td>
         </tr></tfoot>
       </table></div>
     </div>
+
+    {/* ── Stats vols découverte ── */}
+    {(tot.d1 > 0 || tot.d2 > 0 || tot.d3 > 0) && <div className="card">
+      <div className="card-h"><h2>Statistiques vols découverte <span className="badge">{periodLabel}</span></h2></div>
+      <div className="card-b">
+        <div className="sg">
+          <div className="sc"><div className="sc-l">1 passager</div><div className="sc-v b">{tot.d1} vol{tot.d1>1?"s":""}</div></div>
+          <div className="sc"><div className="sc-l">2 passagers</div><div className="sc-v b">{tot.d2} vol{tot.d2>1?"s":""}</div></div>
+          <div className="sc"><div className="sc-l">3 passagers</div><div className="sc-v b">{tot.d3} vol{tot.d3>1?"s":""}</div></div>
+          <div className="sc hl" style={{borderColor:"var(--accent)"}}><div className="sc-l">Total découverte</div><div className="sc-v b">{tot.volsDec} vol{tot.volsDec>1?"s":""}</div><div className="sc-s">{fmt(tot.revDec)}</div></div>
+        </div>
+      </div>
+    </div>}
   </div>);
 }
 
@@ -629,12 +643,15 @@ function Ops({ data, db, year, modal, setModal }) {
   const [filterCat, setFilterCat] = useState("");
   const [filterScope, setFilterScope] = useState("year");
   const [showException, setShowException] = useState("all");
-  // CSV import state
-  const [csvStep, setCsvStep] = useState(null); // null | "upload" | "preview" | "done"
+  // XLSX import state
+  const [impStep, setImpStep] = useState(null); // null | "upload" | "preview" | "done"
+  const [impAcId, setImpAcId] = useState(data.aircraft[0]?.id || "");
+  const [impCatId, setImpCatId] = useState(defaultCatId);
   const [staged, setStaged] = useState([]);
-  const [csvWarnings, setCsvWarnings] = useState([]);
-  const [csvImporting, setCsvImporting] = useState(false);
-  const [csvResult, setCsvResult] = useState(null);
+  const [impWarnings, setImpWarnings] = useState([]);
+  const [impBusy, setImpBusy] = useState(false);
+  const [impResult, setImpResult] = useState(null);
+  const [impError, setImpError] = useState(null);
 
   const openAdd = () => { setForm({id:null,acId:data.aircraft[0]?.id||"",opDate:todayIso,cost:"",label:"",desc:"",categoryId:defaultCatId,isExceptional:false}); setModal("op"); };
   const openEdit = (o) => { setForm({id:o.id,acId:o.acId,opDate:o.opDate||todayIso,cost:String(o.cost),label:o.label,desc:o.desc||"",categoryId:o.categoryId||"",isExceptional:!!o.isExceptional}); setModal("op"); };
@@ -649,9 +666,6 @@ function Ops({ data, db, year, modal, setModal }) {
   const opDateOf = (o) => o.opDate || (o.year!=null && o.month!=null ? `${o.year}-${String(o.month+1).padStart(2,"0")}-01` : "");
   const fmtDate = (iso) => { if(!iso) return "—"; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y}`; };
   const catById = (id) => cats.find(c => c.id === id);
-  const catByName = (name) => { if (!name) return null; const n = name.toLowerCase().trim(); return cats.find(c => c.name.toLowerCase().trim() === n); };
-  const immatToId = (immat) => { const a = data.aircraft.find(ac => ac.immat.toUpperCase().replace(/\s/g,"") === immat.toUpperCase().replace(/\s/g,"")); return a?.id || null; };
-
   const filteredOps = (data.ops||[])
     .filter(o => filterScope==="all" || pf(o.year)===year)
     .filter(o => !filterAc || o.acId===filterAc)
@@ -672,32 +686,29 @@ function Ops({ data, db, year, modal, setModal }) {
   const totalAll = totalNormal + totalExceptional;
   const scopeLabel = filterScope==="all" ? "Tout l'historique" : year;
 
-  // ── CSV import handlers ──
-  const handleCsvFile = (e) => {
+  // ── XLSX import handlers ──
+  const handleXlsxFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setImpError(null);
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const result = parseOpsCSV(ev.target.result);
-      if (result.error) { setCsvWarnings([result.error]); return; }
-      // Map each CSV row to a staged row with resolved acId & categoryId
+      const result = parseOpsXLSX(new Uint8Array(ev.target.result));
+      if (result.error) { setImpError(result.error); return; }
       const rows = result.rows.map((r, idx) => ({
         _idx: idx,
         date: r.date,
-        acId: immatToId(r.immat),
-        immat: r.immat,
-        categoryId: catByName(r.categoryName)?.id || "",
-        categoryName: r.categoryName,
-        cost: r.cost,
         label: r.label,
-        desc: r.desc,
-        isExceptional: r.isExceptional,
+        debit: r.debit,
+        credit: r.credit,
+        cost: r.cost,
+        isExceptional: false,
       }));
       setStaged(rows);
-      setCsvWarnings(result.warnings);
-      setCsvStep("preview");
+      setImpWarnings(result.warnings);
+      setImpStep("preview");
     };
-    reader.readAsText(file, "UTF-8");
+    reader.readAsArrayBuffer(file);
   };
 
   const updateStaged = (idx, field, val) => {
@@ -708,109 +719,152 @@ function Ops({ data, db, year, modal, setModal }) {
   };
 
   const doImport = async () => {
-    const valid = staged.filter(r => r.acId && r.cost > 0);
+    if (!impAcId) return;
+    const valid = staged.filter(r => r.cost !== 0);
     if (!valid.length) return;
-    setCsvImporting(true);
+    setImpBusy(true);
     const opsArr = valid.map(r => ({
-      acId: r.acId,
+      acId: impAcId,
       opDate: r.date,
-      cost: r.cost,
-      label: r.label,
-      desc: r.desc,
-      categoryId: r.categoryId || null,
+      cost: Math.abs(r.cost),
+      label: r.label + (r.cost < 0 ? " (avoir)" : ""),
+      desc: r.credit > 0 ? `Débit: ${r.debit} / Crédit: ${r.credit}` : "",
+      categoryId: impCatId || null,
       isExceptional: r.isExceptional,
     }));
     const count = await db.bulkAddOps(opsArr);
-    setCsvResult({ imported: count, skipped: staged.length - valid.length });
-    setCsvImporting(false);
-    setCsvStep("done");
+    setImpResult({ imported: count, skipped: staged.length - valid.length, total: staged.reduce((s,r) => s + r.cost, 0) });
+    setImpBusy(false);
+    setImpStep("done");
   };
 
-  const resetCsv = () => { setCsvStep(null); setStaged([]); setCsvWarnings([]); setCsvResult(null); };
+  const resetImp = () => { setImpStep(null); setStaged([]); setImpWarnings([]); setImpResult(null); setImpError(null); };
   const stagedTotal = staged.reduce((s,r) => s + (r.cost||0), 0);
-  const stagedUnmatched = staged.filter(r => !r.acId).length;
+  const stagedDebits = staged.reduce((s,r) => s + (r.debit||0), 0);
+  const stagedCredits = staged.reduce((s,r) => s + (r.credit||0), 0);
 
-  // ── If CSV import is active, show import UI ──
-  if (csvStep) return (<div>
+  // ── If import is active, show import UI ──
+  if (impStep) return (<div>
     {/* Upload step */}
-    {csvStep === "upload" && (
+    {impStep === "upload" && (
       <div className="card">
-        <div className="card-h"><h2>Import CSV — Opérations</h2><button className="btn btn-s" onClick={resetCsv}>Annuler</button></div>
+        <div className="card-h"><h2>Import XLSX — Opérations</h2><button className="btn btn-s" onClick={resetImp}>Annuler</button></div>
         <div className="card-b">
           <p style={{fontSize:13,color:"var(--text2)",marginBottom:16,lineHeight:1.8}}>
-            Importez vos factures / opérations depuis un fichier CSV.<br/>
-            Colonnes attendues : <strong>date</strong>, <strong>avion</strong> (immat), <strong>montant</strong>, <strong>libellé</strong>. Optionnels : catégorie, description, exceptionnel.
+            Importez vos factures depuis un fichier Excel (.xlsx).<br/>
+            Colonnes attendues : <strong>Date</strong>, <strong>Infos</strong> (descriptif), <strong>Débit</strong>, <strong>Crédit</strong> (optionnel).
           </p>
-          <div style={{border:"2px dashed var(--border)",borderRadius:12,padding:40,textAlign:"center",background:"var(--bg)"}}>
-            <input type="file" accept=".csv,.txt,.tsv" onChange={handleCsvFile} style={{fontSize:14,fontFamily:"inherit"}}/>
+          <div className="fg" style={{marginBottom:20}}>
+            <div className="fi">
+              <label>Avion pour cet import</label>
+              <select value={impAcId} onChange={e=>setImpAcId(e.target.value)}>
+                {data.aircraft.map(a=><option key={a.id} value={a.id}>{a.immat} — {a.type}</option>)}
+              </select>
+            </div>
+            <div className="fi">
+              <label>Catégorie</label>
+              <select value={impCatId} onChange={e=>setImpCatId(e.target.value)}>
+                <option value="">— Aucune —</option>
+                {cats.map(c=><option key={c.id} value={c.id}>{c.name}{c.accountCode?` (${c.accountCode})`:""}</option>)}
+              </select>
+            </div>
           </div>
-          {csvWarnings.length > 0 && <div style={{color:"var(--red)",marginTop:16,fontSize:13,fontWeight:600}}>{csvWarnings[0]}</div>}
+          <div style={{border:"2px dashed var(--border)",borderRadius:12,padding:40,textAlign:"center",background:"var(--bg)"}}>
+            <input type="file" accept=".xlsx,.xls" onChange={handleXlsxFile} style={{fontSize:14,fontFamily:"inherit"}}/>
+          </div>
+          {impError && <div style={{color:"var(--red)",marginTop:16,fontSize:13,fontWeight:600}}>{impError}</div>}
         </div>
       </div>
     )}
 
     {/* Preview / edit step */}
-    {csvStep === "preview" && (
+    {impStep === "preview" && (
       <div>
-        <div className="sg">
-          <div className="sc"><div className="sc-l">LIGNES</div><div className="sc-v b">{staged.length}</div></div>
-          <div className="sc"><div className="sc-l">TOTAL</div><div className="sc-v o">{fmt(stagedTotal)}</div></div>
-          {stagedUnmatched > 0 && <div className="sc"><div className="sc-l">AVION NON TROUVÉ</div><div className="sc-v r">{stagedUnmatched}</div><div className="sc-s">Attribuez-les via le menu déroulant</div></div>}
+        <div className="card">
+          <div className="card-h">
+            <h2>Import pour <span style={{color:"var(--accent)"}}>{data.aircraft.find(a=>a.id===impAcId)?.immat || "?"}</span>
+            {impCatId && <> · <span style={{color:catById(impCatId)?.color||"var(--text3)"}}>{catById(impCatId)?.name}</span></>}
+            </h2>
+            <button className="btn btn-s" onClick={resetImp}>Annuler</button>
+          </div>
+          <div style={{display:"flex",gap:10,padding:"12px 20px",flexWrap:"wrap",alignItems:"center",borderBottom:"1px solid var(--border)"}}>
+            <div className="fi" style={{flex:"0 0 auto",gap:4}}>
+              <label style={{fontSize:11}}>Avion</label>
+              <select value={impAcId} onChange={e=>setImpAcId(e.target.value)} style={{padding:"4px 8px",fontSize:13}}>
+                {data.aircraft.map(a=><option key={a.id} value={a.id}>{a.immat}</option>)}
+              </select>
+            </div>
+            <div className="fi" style={{flex:"0 0 auto",gap:4}}>
+              <label style={{fontSize:11}}>Catégorie</label>
+              <select value={impCatId} onChange={e=>setImpCatId(e.target.value)} style={{padding:"4px 8px",fontSize:13}}>
+                <option value="">— Aucune —</option>
+                {cats.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
         </div>
 
-        {csvWarnings.length > 0 && (
+        <div className="sg">
+          <div className="sc"><div className="sc-l">LIGNES</div><div className="sc-v b">{staged.length}</div></div>
+          <div className="sc"><div className="sc-l">DÉBITS</div><div className="sc-v o">{fmt(stagedDebits)}</div></div>
+          {stagedCredits > 0 && <div className="sc"><div className="sc-l">CRÉDITS</div><div className="sc-v g">{fmt(stagedCredits)}</div></div>}
+          <div className="sc"><div className="sc-l">NET</div><div className="sc-v" style={{color:stagedTotal>=0?"var(--red)":"var(--green)"}}>{fmt(stagedTotal)}</div></div>
+        </div>
+
+        {impWarnings.length > 0 && (
           <div className="card" style={{borderColor:"var(--orange)"}}>
-            <div className="card-h"><h2 style={{color:"var(--orange)"}}>Avertissements ({csvWarnings.length})</h2></div>
-            <div className="card-b" style={{maxHeight:150,overflowY:"auto"}}>{csvWarnings.slice(0,30).map((w,i) => <div key={i} style={{fontSize:12,color:"var(--text3)",padding:"2px 0"}}>{w}</div>)}</div>
+            <div className="card-h"><h2 style={{color:"var(--orange)"}}>Avertissements ({impWarnings.length})</h2></div>
+            <div className="card-b" style={{maxHeight:150,overflowY:"auto"}}>{impWarnings.slice(0,30).map((w,i) => <div key={i} style={{fontSize:12,color:"var(--text3)",padding:"2px 0"}}>{w}</div>)}</div>
           </div>
         )}
 
         <div className="card">
-          <div className="card-h"><h2>Aperçu — {staged.length} opérations</h2><span style={{fontSize:11,color:"var(--text3)"}}>Modifiez les lignes avant import</span></div>
+          <div className="card-h"><h2>Aperçu — {staged.length} opérations</h2><span style={{fontSize:11,color:"var(--text3)"}}>Modifiez avant import</span></div>
           <div className="tw" style={{maxHeight:500,overflowY:"auto"}}><table>
-            <thead><tr><th>Date</th><th>Avion</th><th>Catégorie</th><th>Libellé</th><th>Montant</th><th>Excep.</th><th></th></tr></thead>
+            <thead><tr><th>Date</th><th>Infos</th><th>Débit</th><th>Crédit</th><th>Net</th><th>Excep.</th><th></th></tr></thead>
             <tbody>{staged.map(r => (
-              <tr key={r._idx} style={!r.acId ? {background:"var(--red-s)"} : r.isExceptional ? {background:"rgba(234,88,12,0.06)"} : {}}>
-                <td className="tx" style={{fontSize:12}}>{fmtDate(r.date)}</td>
-                <td>
-                  <select value={r.acId||""} onChange={e=>updateStaged(r._idx,"acId",e.target.value)} style={{padding:"4px 6px",fontSize:12,minWidth:80,border:`1px solid ${r.acId?"var(--border)":"var(--red)"}`,borderRadius:4}}>
-                    {!r.acId && <option value="">— {r.immat} —</option>}
-                    {data.aircraft.map(a=><option key={a.id} value={a.id}>{a.immat}</option>)}
-                  </select>
-                </td>
-                <td>
-                  <select value={r.categoryId||""} onChange={e=>updateStaged(r._idx,"categoryId",e.target.value)} style={{padding:"4px 6px",fontSize:12,minWidth:100,border:"1px solid var(--border)",borderRadius:4}}>
-                    <option value="">—</option>
-                    {cats.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </td>
-                <td className="tx" style={{fontSize:12,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}}>{r.label}</td>
-                <td><input type="number" step="0.01" value={r.cost} onChange={e=>updateStaged(r._idx,"cost",parseFloat(e.target.value)||0)} style={{padding:"4px 6px",fontSize:12,width:80,border:"1px solid var(--border)",borderRadius:4,textAlign:"right"}}/></td>
+              <tr key={r._idx} style={r.credit > 0 ? {background:"var(--green-s)"} : r.isExceptional ? {background:"rgba(234,88,12,0.06)"} : {}}>
+                <td className="tx" style={{fontSize:12,whiteSpace:"nowrap"}}>{fmtDate(r.date)}</td>
+                <td className="tx" style={{fontSize:12}}>{r.label}</td>
+                <td className="num" style={{color:"var(--red)"}}>{r.debit>0?fmt(r.debit):"—"}</td>
+                <td className="num" style={{color:"var(--green)"}}>{r.credit>0?fmt(r.credit):"—"}</td>
+                <td className="num" style={{fontWeight:600,color:r.cost>=0?"var(--red)":"var(--green)"}}>{fmt(r.cost)}</td>
                 <td style={{textAlign:"center"}}><input type="checkbox" checked={r.isExceptional} onChange={e=>updateStaged(r._idx,"isExceptional",e.target.checked)} style={{width:14,height:14}}/></td>
                 <td><button className="btn btn-s btn-d btn-ghost" onClick={()=>removeStaged(r._idx)} style={{padding:"2px 6px"}}>✕</button></td>
               </tr>
             ))}</tbody>
+            <tfoot><tr style={{borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"}}>
+              <td colSpan={2} className="tx" style={{fontWeight:800,padding:"14px 12px",letterSpacing:.5}}>TOTAL</td>
+              <td className="num" style={{color:"var(--red)",fontWeight:700,padding:"14px 12px"}}>{fmt(stagedDebits)}</td>
+              <td className="num" style={{color:"var(--green)",fontWeight:700,padding:"14px 12px"}}>{stagedCredits>0?fmt(stagedCredits):"—"}</td>
+              <td className="num" style={{fontWeight:800,fontSize:15,padding:"14px 12px",color:stagedTotal>=0?"var(--red)":"var(--green)"}}>{fmt(stagedTotal)}</td>
+              <td colSpan={2}></td>
+            </tr></tfoot>
           </table></div>
         </div>
 
         <div style={{display:"flex",gap:12,justifyContent:"flex-end",marginTop:8}}>
-          <button className="btn" onClick={resetCsv}>Annuler</button>
-          <button className="btn btn-p" onClick={doImport} disabled={csvImporting || stagedUnmatched > 0}>
-            {csvImporting ? "Import en cours…" : `Importer ${staged.filter(r=>r.acId).length} opérations (${fmt(stagedTotal)})`}
+          <button className="btn" onClick={resetImp}>Annuler</button>
+          <button className="btn btn-p" onClick={doImport} disabled={impBusy || !impAcId}>
+            {impBusy ? "Import en cours…" : `Importer ${staged.length} opérations`}
           </button>
         </div>
       </div>
     )}
 
     {/* Done step */}
-    {csvStep === "done" && csvResult && (
+    {impStep === "done" && impResult && (
       <div className="card">
         <div className="card-h"><h2 style={{color:"var(--green)"}}>Import terminé</h2></div>
         <div className="card-b" style={{textAlign:"center",padding:40}}>
           <div style={{fontSize:48,marginBottom:12}}>✓</div>
-          <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>{csvResult.imported} opération(s) importée(s)</div>
-          {csvResult.skipped > 0 && <div style={{fontSize:13,color:"var(--text3)"}}>{csvResult.skipped} ignorée(s) (avion manquant ou montant nul)</div>}
-          <button className="btn btn-p" onClick={resetCsv} style={{marginTop:20}}>Retour aux opérations</button>
+          <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>{impResult.imported} opération(s) importée(s)</div>
+          <div style={{fontSize:14,color:"var(--text2)",marginBottom:4}}>
+            Avion : <strong style={{color:"var(--accent)"}}>{data.aircraft.find(a=>a.id===impAcId)?.immat}</strong>
+            {impCatId && <> · Catégorie : <strong>{catById(impCatId)?.name}</strong></>}
+          </div>
+          {impResult.skipped > 0 && <div style={{fontSize:13,color:"var(--text3)"}}>{impResult.skipped} ignorée(s)</div>}
+          <button className="btn btn-p" onClick={resetImp} style={{marginTop:20}}>Retour aux opérations</button>
         </div>
       </div>
     )}
@@ -823,7 +877,7 @@ function Ops({ data, db, year, modal, setModal }) {
         <h2>Opérations & factures — {scopeLabel}</h2>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <button className="btn btn-s" onClick={()=>setModal("cats")}>⚙ Catégories</button>
-          <button className="btn btn-s" onClick={()=>setCsvStep("upload")}>Import CSV</button>
+          <button className="btn btn-s" onClick={()=>setImpStep("upload")}>Import XLSX</button>
           <button className="btn btn-p" onClick={openAdd}>+ Ajouter</button>
         </div>
       </div>
@@ -1114,26 +1168,22 @@ function Simulation({ data, year, range }) {
         <div className="card-b">
           <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Modifiez directement les valeurs par avion pour voir l&apos;impact sur le résultat.</p>
           <div className="tw"><table>
-            <thead><tr><th>Avion</th><th>Tarif (€/h)</th><th>Heures</th><th>Vols</th><th>Carburant (€/L)</th><th>Maint. (€/h)</th><th>Résultat actuel</th><th>Résultat simulé</th><th>Delta</th></tr></thead>
+            <thead><tr><th>Avion</th><th>Tarif (€/h)</th><th>Heures</th><th>Vols</th><th>Résultat actuel</th><th>Résultat simulé</th><th>Delta</th></tr></thead>
             <tbody>{items.map(({ ac, cur, proj, delta }) => {
               const ov = globOv[ac.id] || {};
               const curTarif = getRate(data.rates, ac.id, "tarifHeure", year, lm);
-              const curPC = getRate(data.rates, ac.id, "prixCarburant", year, lm);
-              const curMH = getRate(data.rates, ac.id, "maintenanceHoraire", year, lm);
               return (<tr key={ac.id}>
                 <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
                 <td><input type="number" step="1" value={ov.tarifHeure !== undefined ? ov.tarifHeure : curTarif} onChange={e => setGOv(ac.id,"tarifHeure",pf(e.target.value))} style={inpSt(curTarif, ov.tarifHeure)}/></td>
                 <td><input type="number" step="1" value={ov.heures !== undefined ? ov.heures : Math.round(cur.heures)} onChange={e => setGOv(ac.id,"heures",pf(e.target.value))} style={inpSt(Math.round(cur.heures), ov.heures)}/></td>
                 <td><input type="number" step="1" value={ov.rotations !== undefined ? ov.rotations : cur.rotations} onChange={e => setGOv(ac.id,"rotations",pf(e.target.value))} style={inpSt(cur.rotations, ov.rotations)}/></td>
-                <td><input type="number" step="0.01" value={ov.prixCarburant !== undefined ? ov.prixCarburant : curPC} onChange={e => setGOv(ac.id,"prixCarburant",pf(e.target.value))} style={inpSt(curPC, ov.prixCarburant)}/></td>
-                <td><input type="number" step="1" value={ov.maintenanceHoraire !== undefined ? ov.maintenanceHoraire : curMH} onChange={e => setGOv(ac.id,"maintenanceHoraire",pf(e.target.value))} style={inpSt(curMH, ov.maintenanceHoraire)}/></td>
                 <td className={cur.resultat>=0?"pos":"neg"}>{cur.resultat>=0?"+":""}{fmt(cur.resultat)}</td>
                 <td className={proj.resultat>=0?"pos":"neg"} style={{fontWeight:700}}>{proj.resultat>=0?"+":""}{fmt(proj.resultat)}</td>
                 <td style={{color:delta>=0?"var(--green)":"var(--red)",fontWeight:600}}>{delta>=0?"+":""}{fmt(delta)}</td>
               </tr>);
             })}</tbody>
             <tfoot><tr style={{fontWeight:700,borderTop:"2px solid var(--border)"}}>
-              <td>TOTAL</td><td></td><td className="num">{fH(totProj.heures)}</td><td></td><td></td><td></td>
+              <td>TOTAL</td><td></td><td className="num">{fH(totProj.heures)}</td><td></td>
               <td className={totCur.resultat>=0?"pos":"neg"}>{totCur.resultat>=0?"+":""}{fmt(totCur.resultat)}</td>
               <td className={totProj.resultat>=0?"pos":"neg"}>{totProj.resultat>=0?"+":""}{fmt(totProj.resultat)}</td>
               <td style={{color:totProj.resultat-totCur.resultat>=0?"var(--green)":"var(--red)"}}>{totProj.resultat-totCur.resultat>=0?"+":""}{fmt(totProj.resultat-totCur.resultat)}</td>
@@ -1263,8 +1313,7 @@ function Simulation({ data, year, range }) {
               {l:"Rev. Initiation",a:cur.revenuInitiation||0,p:proj.revenuInitiation||0},
               {l:"Rev. BIA",a:cur.revenuBia||0,p:proj.revenuBia||0},
               {l:"Revenus total",a:cur.revenu,p:proj.revenu},
-              {l:"Coûts fixes",a:cur.fixe,p:proj.fixe},
-              {l:"Coûts variables",a:cur.variable,p:proj.variable},{l:"Prêts",a:cur.loan,p:proj.loan},
+              {l:"Carburant & huile",a:cur.variable,p:proj.variable},{l:"Prêts",a:cur.loan,p:proj.loan},
               {l:"Opérations",a:cur.opsC,p:proj.opsC},{l:"Total dépenses",a:cur.depenses,p:proj.depenses},
               {l:"Résultat",a:cur.resultat,p:proj.resultat},
             ].map(r => {
@@ -1300,19 +1349,15 @@ function Simulation({ data, year, range }) {
     return (<div className="card">
       <div className="card-h"><h2>Seuil de rentabilité interactif <span className="badge">{year}</span></h2></div>
       <div className="card-b">
-        <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Modifiez le tarif horaire ou le forfait roulage pour voir l&apos;impact sur le seuil de rentabilité. La DC est au même tarif.</p>
+        <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Modifiez le tarif horaire pour voir l&apos;impact sur le seuil de rentabilité.</p>
       </div>
       <div className="tw"><table>
-        <thead><tr><th>Avion</th><th>Tarif actuel</th><th>Tarif simulé</th><th>Roulage</th><th>Roulage sim.</th><th>Roulage (€/vol)</th><th>Seuil (h)</th><th>H. actuelles</th><th>Excédent</th><th>Statut</th></tr></thead>
+        <thead><tr><th>Avion</th><th>Tarif actuel</th><th>Tarif simulé</th><th>Seuil (h)</th><th>H. actuelles</th><th>Excédent</th><th>Statut</th></tr></thead>
         <tbody>{data.aircraft.filter(ac => isAircraftActiveYear(ac, year, range)).map(ac => {
           const cur = aggAC(data, ac.id, year, range);
           const curTarif = getRate(data.rates, ac.id, "tarifHeure", year, lm);
-          const bb = isBlockBlock(data, ac.id, year, lm);
-          const curForfaitMin = bb ? 0 : getGlobalRate(data.rates, "forfaitRoulage", year, lm);
           const simTarif = beOverrides[ac.id]?.tarif !== undefined ? beOverrides[ac.id].tarif : curTarif;
-          const simForfaitMin = bb ? 0 : (beOverrides[ac.id]?.forfait !== undefined ? beOverrides[ac.id].forfait : curForfaitMin);
-          const simForfaitEur = (simForfaitMin / 60) * simTarif;
-          const be = breakEvenHours(data, ac.id, year, range, simTarif, simForfaitMin);
+          const be = breakEvenHours(data, ac.id, year, range, simTarif);
           const beOk = be !== Infinity;
           const margin = cur.heures - be;
           const pct = beOk && be > 0 ? cur.heures / be : 0;
@@ -1323,9 +1368,6 @@ function Simulation({ data, year, range }) {
             <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
             <td className="num">{fmt2(curTarif)}</td>
             <td><input type="number" step="1" value={simTarif} onChange={e => setBeOverrides(p=>({...p,[ac.id]:{...(p[ac.id]||{}),tarif:pf(e.target.value)}}))} style={inpSt(curTarif,simTarif)}/></td>
-            <td className="num">{curForfaitMin} min</td>
-            <td><input type="number" step="1" value={simForfaitMin} onChange={e => setBeOverrides(p=>({...p,[ac.id]:{...(p[ac.id]||{}),forfait:pf(e.target.value)}}))} style={inpSt(curForfaitMin,simForfaitMin)}/></td>
-            <td className="num" style={{color:"var(--purple)"}}>{fmt2(simForfaitEur)}</td>
             <td className="num" style={{fontWeight:700}}>{beOk ? fH(be) : "∞"}</td>
             <td className="num">{fH(cur.heures)}</td>
             <td className={margin>=0?"pos":"neg"}>{beOk ? (margin>=0?"+":"") + fH(margin) : "—"}</td>
@@ -1663,16 +1705,14 @@ function Fleet({ data, db, modal, setModal, year }) {
       <div className="card-h"><h2>Flotte</h2><button className="btn btn-p" onClick={openAdd}>+ Ajouter un avion</button></div>
       {!data.aircraft.length ? <div className="empty">Aucun avion configuré.</div> : (
         <div className="tw"><table>
-          <thead><tr><th>Immatriculation</th><th>Type</th><th>Carburant</th><th>Huile</th><th>Facturation</th><th>Actif</th><th></th></tr></thead>
+          <thead><tr><th>Immatriculation</th><th>Type</th><th>Carburant</th><th>Huile</th><th>Actif</th><th></th></tr></thead>
           <tbody>{data.aircraft.map(ac => {
             const active = !ac.activeTo;
-            const bb = isBlockBlock(data, ac.id, year, lm);
             return (<tr key={ac.id} style={!active?{opacity:.5}:{}}>
               <td className="tx" style={{color:"var(--accent)",fontWeight:700}}>{ac.immat}</td>
               <td className="tx">{ac.type}</td>
               <td className="tx">{ac.carbuType || "100LL"}</td>
               <td className="tx">{ac.huileType || "W100"}</td>
-              <td>{bb ? <span className="tag tag-o">Block-Block</span> : <span className="tag tag-g">Roulage</span>}</td>
               <td>{ac.activeFrom || ac.activeTo ? <span style={{fontSize:12,color:"var(--text3)"}}>{fmtDate(ac.activeFrom)||"…"} → {fmtDate(ac.activeTo)||"Actif"}</span> : <span className="tag tag-g">Actif</span>}</td>
               <td style={{display:"flex",gap:6}}>
                 <button className="btn btn-s" onClick={() => openEdit(ac)}>Modifier</button>
