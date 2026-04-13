@@ -1637,6 +1637,7 @@ function ImportCSV({ data, db }) {
   const [result, setResult] = useState(null);
   const [importYear, setImportYear] = useState(new Date().getFullYear());
   const [importTarget, setImportTarget] = useState("standard"); // "standard" or flight type id
+  const [importAcId, setImportAcId] = useState("auto"); // "auto" or aircraft id
 
   const flightTypes = data.flightTypes || [];
   const targetFt = flightTypes.find(ft => ft.id === importTarget);
@@ -1667,20 +1668,26 @@ function ImportCSV({ data, db }) {
     const immatMap = {};
     data.aircraft.forEach(ac => { immatMap[ac.immat.toUpperCase().replace(/\s/g, "")] = ac.id; });
 
-    // Create missing aircraft first
-    for (const immat of agg.unknownImmats) {
-      const ac = await db.addAircraft(immat, "—");
-      if (ac) immatMap[immat] = ac.id;
+    // Create missing aircraft first (only in auto mode)
+    if (importAcId === "auto") {
+      for (const immat of agg.unknownImmats) {
+        const ac = await db.addAircraft(immat, "—");
+        if (ac) immatMap[immat] = ac.id;
+      }
     }
 
+    // Aggregate rows by aircraft if a specific aircraft is selected
+    const rows = importAcId !== "auto"
+      ? aggregateRowsForAc(agg.monthly)
+      : agg.monthly;
+
     // Import data to target
-    for (const row of agg.monthly) {
-      const acId = immatMap[row.immat];
+    for (const row of rows) {
+      const acId = importAcId !== "auto" ? importAcId : immatMap[row.immat];
       if (!acId) { skipped++; continue; }
       if (importTarget === "standard") {
         await db.setMonthly(acId, row.year, row.month, { heures: row.heures, rotations: row.rotations, heuresDc: row.heuresDc });
       } else {
-        // Import to flight type: heures CdB → heures, rotations → vols
         await db.setFlightActivity(acId, importTarget, row.year, row.month, {
           heures: row.heures + row.heuresDc,
           vols: row.rotations,
@@ -1689,12 +1696,28 @@ function ImportCSV({ data, db }) {
       imported++;
     }
 
-    const nbAc = new Set(agg.monthly.map(r => r.immat)).size;
-    const nbMo = new Set(agg.monthly.map(r => r.month)).size;
-    setResult({ imported, skipped, newAircraft: agg.unknownImmats.length, nbAc, nbMo, year: importYear, target: importTarget === "standard" ? "Standard" : (targetFt?.name || importTarget) });
+    const nbAc = importAcId !== "auto" ? 1 : new Set(agg.monthly.map(r => r.immat)).size;
+    const nbMo = new Set(rows.map(r => r.month)).size;
+    const acLabel = importAcId !== "auto" ? data.aircraft.find(a => a.id === importAcId)?.immat : null;
+    setResult({ imported, skipped, newAircraft: importAcId === "auto" ? agg.unknownImmats.length : 0, nbAc, nbMo, year: importYear, target: importTarget === "standard" ? "Standard" : (targetFt?.name || importTarget), acLabel });
     setImporting(false);
     setStep("done");
     db.reload();
+  };
+
+  // When importing all CSV data to a single aircraft, aggregate monthly rows
+  const aggregateRowsForAc = (rows) => {
+    const byMonth = {};
+    rows.forEach(r => {
+      const k = `${r.year}|${r.month}`;
+      if (!byMonth[k]) byMonth[k] = { year: r.year, month: r.month, heures: 0, heuresDc: 0, rotations: 0, carbu: 0, montant: 0 };
+      byMonth[k].heures += r.heures;
+      byMonth[k].heuresDc += r.heuresDc;
+      byMonth[k].rotations += r.rotations;
+      byMonth[k].carbu += r.carbu || 0;
+      byMonth[k].montant += r.montant || 0;
+    });
+    return Object.values(byMonth).sort((a, b) => a.year * 12 + a.month - (b.year * 12 + b.month));
   };
 
   const reset = () => { setStep("upload"); setParsed(null); setAgg(null); setResult(null); };
@@ -1723,9 +1746,17 @@ function ImportCSV({ data, db }) {
                 {flightTypes.map(ft => <option key={ft.id} value={ft.id}>{ft.name}</option>)}
               </select>
             </div>
+            <div className="fi">
+              <label>Avion</label>
+              <select value={importAcId} onChange={e => setImportAcId(e.target.value)}>
+                <option value="auto">Auto (depuis le CSV)</option>
+                {data.aircraft.map(a => <option key={a.id} value={a.id}>{a.immat} — {a.type}</option>)}
+              </select>
+            </div>
           </div>
-          {importTarget !== "standard" && <div style={{fontSize:12,color:"var(--orange)",marginBottom:16,padding:"8px 14px",background:"var(--orange-s)",borderRadius:8}}>
-            Import vers <strong>{targetFt?.name}</strong> : les heures CdB+DC seront importées comme heures, les mouvements comme nombre de vols.
+          {(importTarget !== "standard" || importAcId !== "auto") && <div style={{fontSize:12,color:"var(--orange)",marginBottom:16,padding:"8px 14px",background:"var(--orange-s)",borderRadius:8}}>
+            {importAcId !== "auto" && <>Toutes les données du CSV seront importées sur <strong>{data.aircraft.find(a=>a.id===importAcId)?.immat}</strong>.<br/></>}
+            {importTarget !== "standard" && <>Import vers <strong>{targetFt?.name}</strong> : les heures CdB+DC seront importées comme heures, les mouvements comme nombre de vols.</>}
           </div>}
           <div style={{border:"2px dashed var(--border)",borderRadius:12,padding:40,textAlign:"center",background:"var(--bg)"}}>
             <input type="file" accept=".csv,.txt" onChange={handleFile} style={{fontSize:14,fontFamily:"inherit"}}/>
@@ -1813,7 +1844,7 @@ function ImportCSV({ data, db }) {
         <div className="card-h"><h2 style={{color:"var(--green)"}}>Import terminé</h2></div>
         <div className="card-b" style={{textAlign:"center",padding:40}}>
           <div style={{fontSize:48,marginBottom:12}}>✓</div>
-          <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>Import {result.year} terminé — {result.nbAc} avions × {result.nbMo} mois{result.target ? ` → ${result.target}` : ""}</div>
+          <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>Import {result.year} terminé — {result.acLabel ? result.acLabel : `${result.nbAc} avions`} × {result.nbMo} mois{result.target ? ` → ${result.target}` : ""}</div>
           {result.newAircraft > 0 && <div style={{fontSize:13,color:"var(--orange)",marginBottom:4}}>{result.newAircraft} avion(s) créé(s)</div>}
           {result.skipped > 0 && <div style={{fontSize:13,color:"var(--text3)"}}>{result.skipped} ignoré(s)</div>}
           <button className="btn btn-p" onClick={reset} style={{marginTop:20}}>Nouvel import</button>
