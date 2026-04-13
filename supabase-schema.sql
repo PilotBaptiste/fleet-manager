@@ -30,54 +30,78 @@ CREATE TABLE rates (
 
 CREATE INDEX idx_rates_ac ON rates(ac_id, field, from_year, from_month);
 
--- Monthly activity (heures par catégorie de vol)
+-- Monthly activity — standard flights only (CdB / DC)
 CREATE TABLE monthly (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ac_id UUID REFERENCES aircraft(id) ON DELETE CASCADE,
   year INT NOT NULL,
   month INT NOT NULL,          -- 0-11
   heures NUMERIC DEFAULT 0,    -- heures CdB pilotes (commandant de bord)
-  rotations INT DEFAULT 0,     -- nombre de mouvements (tous types confondus)
   heures_dc NUMERIC DEFAULT 0, -- heures Double Commande pilotes
-  heures_decouverte NUMERIC DEFAULT 0, -- vols découverte (heures avion, pour coûts)
-  heures_initiation NUMERIC DEFAULT 0, -- vols d'initiation
-  heures_bia NUMERIC DEFAULT 0,        -- vols BIA
+  rotations INT DEFAULT 0,     -- nombre de mouvements (tous types confondus)
   litres_carburant NUMERIC DEFAULT 0,  -- litres carburant réels (sinon calc via conso)
-  vols_dec_1pax INT DEFAULT 0,           -- nb vols découverte 1 passager
-  vols_dec_2pax INT DEFAULT 0,           -- nb vols découverte 2 passagers
-  vols_dec_3pax INT DEFAULT 0,           -- nb vols découverte 3 passagers
-  vols_initiation INT DEFAULT 0,       -- nb vols initiation
-  vols_bia INT DEFAULT 0,              -- nb vols BIA
-  revenu_bia NUMERIC DEFAULT 0,        -- revenu BIA saisi (coût variable par vol)
-  heures_voltige_dec NUMERIC DEFAULT 0,-- heures voltige découverte
-  vols_voltige_dec INT DEFAULT 0,      -- nb vols voltige découverte
-  heures_vintage NUMERIC DEFAULT 0,    -- heures vol vintage
-  vols_vintage INT DEFAULT 0,          -- nb vols vintage
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(ac_id, year, month)
 );
 
--- Migrations
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_decouverte NUMERIC DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_initiation NUMERIC DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_bia NUMERIC DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS litres_carburant NUMERIC DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_dec_1pax INT DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_dec_2pax INT DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_dec_3pax INT DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_initiation INT DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_bia INT DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS revenu_bia NUMERIC DEFAULT 0;
--- Migrate old single vols_decouverte → vols_dec_1pax (best effort)
-UPDATE monthly SET vols_dec_1pax = COALESCE(vols_decouverte, 0)
-  WHERE vols_dec_1pax = 0 AND COALESCE(vols_decouverte, 0) > 0;
+-- Configurable flight types (Découverte, Initiation, BIA, Voltige…)
+-- mode: 'tarif' = vols × tarif, 'pax3' = 3 pax tiers, 'direct' = manual revenue
+CREATE TABLE flight_types (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  color TEXT DEFAULT '#6b7280',
+  mode TEXT NOT NULL DEFAULT 'tarif',  -- 'tarif' | 'pax3' | 'direct'
+  tarif_key TEXT,              -- rate key for auto-revenue (e.g. 'tarifInitiation')
+  tarif_key_2 TEXT,            -- pax3 only: 2nd pax tarif key
+  tarif_key_3 TEXT,            -- pax3 only: 3rd pax tarif key
+  sort_order INT DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Per-type per-month flight activity
+CREATE TABLE flight_activity (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ac_id UUID REFERENCES aircraft(id) ON DELETE CASCADE,
+  flight_type_id UUID REFERENCES flight_types(id) ON DELETE CASCADE,
+  year INT NOT NULL,
+  month INT NOT NULL,          -- 0-11
+  heures NUMERIC DEFAULT 0,
+  vols INT DEFAULT 0,          -- nb vols (or 1pax for pax3 mode)
+  vols_2 INT DEFAULT 0,        -- pax3 only: 2pax
+  vols_3 INT DEFAULT 0,        -- pax3 only: 3pax
+  revenu NUMERIC DEFAULT 0,    -- direct mode only: manual revenue entry
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(ac_id, flight_type_id, year, month)
+);
+
+CREATE INDEX idx_flight_activity_ac ON flight_activity(ac_id, year, month);
+
+-- Default flight types
+INSERT INTO flight_types (name, color, mode, tarif_key, tarif_key_2, tarif_key_3, sort_order) VALUES
+  ('Découverte',           '#8b5cf6', 'pax3',   'tarifDec1pax', 'tarifDec2pax', 'tarifDec3pax', 10),
+  ('Initiation',           '#f97316', 'tarif',  'tarifInitiation', NULL, NULL, 20),
+  ('BIA',                  '#22c55e', 'direct', NULL, NULL, NULL, 30),
+  ('Voltige découverte',   '#a855f7', 'tarif',  'tarifVoltigeDec', NULL, NULL, 40),
+  ('Vintage',              '#0ea5e9', 'tarif',  'tarifVintage', NULL, NULL, 50)
+ON CONFLICT DO NOTHING;
+
+-- Migration: simplify monthly table (drop old flight-type columns)
+ALTER TABLE monthly DROP COLUMN IF EXISTS heures_decouverte;
+ALTER TABLE monthly DROP COLUMN IF EXISTS heures_initiation;
+ALTER TABLE monthly DROP COLUMN IF EXISTS heures_bia;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_dec_1pax;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_dec_2pax;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_dec_3pax;
 ALTER TABLE monthly DROP COLUMN IF EXISTS vols_decouverte;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_initiation;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_bia;
 ALTER TABLE monthly DROP COLUMN IF EXISTS revenu_decouverte;
 ALTER TABLE monthly DROP COLUMN IF EXISTS revenu_initiation;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_voltige_dec NUMERIC DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_voltige_dec INT DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_vintage NUMERIC DEFAULT 0;
-ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_vintage INT DEFAULT 0;
+ALTER TABLE monthly DROP COLUMN IF EXISTS revenu_bia;
+ALTER TABLE monthly DROP COLUMN IF EXISTS heures_voltige_dec;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_voltige_dec;
+ALTER TABLE monthly DROP COLUMN IF EXISTS heures_vintage;
+ALTER TABLE monthly DROP COLUMN IF EXISTS vols_vintage;
 
 -- Loans
 CREATE TABLE loans (
@@ -151,6 +175,8 @@ ALTER TABLE monthly ENABLE ROW LEVEL SECURITY;
 ALTER TABLE loans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ops ENABLE ROW LEVEL SECURITY;
 ALTER TABLE op_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE flight_types ENABLE ROW LEVEL SECURITY;
+ALTER TABLE flight_activity ENABLE ROW LEVEL SECURITY;
 
 -- Allow all operations for authenticated users
 CREATE POLICY "auth_all" ON aircraft FOR ALL USING (auth.role() = 'authenticated');
@@ -159,3 +185,5 @@ CREATE POLICY "auth_all" ON monthly FOR ALL USING (auth.role() = 'authenticated'
 CREATE POLICY "auth_all" ON loans FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "auth_all" ON ops FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "auth_all" ON op_categories FOR ALL USING (auth.role() = 'authenticated');
+CREATE POLICY "auth_all" ON flight_types FOR ALL USING (auth.role() = 'authenticated');
+CREATE POLICY "auth_all" ON flight_activity FOR ALL USING (auth.role() = 'authenticated');

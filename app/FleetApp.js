@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
 import { useFleetData } from "../lib/useFleetData";
-import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getRate, getGlobalRate, getActivity, loanPayment, calcMonth, aggAC, globAgg, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
+import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getDynamicRateFields, getAllRateGroups, getRate, getGlobalRate, getActivity, getFlightAct, flightTypeRevenue, loanPayment, calcMonth, aggAC, globAgg, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
 import { parseFlightCSV, aggregateFlights } from "../lib/csvImport";
 import { parseOpsXLSX } from "../lib/xlsxOpsImport";
 
@@ -358,14 +358,19 @@ function HMInput({ value, onChange, style, placeholder }) {
 function Activity({ data, db, year, range }) {
   const [acId, setAcId] = useState(data.aircraft[0]?.id || null);
   const [sub, setSub] = useState("standard");
+  const [ftModal, setFtModal] = useState(null); // null | "add" | ftId (edit)
+  const [ftForm, setFtForm] = useState({ name:"", color:"#6b7280", mode:"tarif", tarifKey:"", tarifKey2:"", tarifKey3:"", sortOrder:0 });
   const inpSt = {padding:"6px 10px",border:"1px solid var(--border)",borderRadius:6,fontSize:14,fontFamily:"inherit",outline:"none",background:"var(--bg)"};
   const inpSm = {...inpSt, width:60};
   const inpN = {...inpSt, width:55, textAlign:"center"};
   const inpE = {...inpSt, width:80};
   if (!data.aircraft.length) return <div className="card"><div className="empty">Ajoutez des avions dans Flotte.</div></div>;
 
+  const flightTypes = data.flightTypes || [];
   const save = (i, field, val) => { db.setMonthly(acId, year, i, { [field]: pf(val) }); };
   const saveHM = (i, field, val) => { db.setMonthly(acId, year, i, { [field]: val }); };
+  const saveFa = (ftId, i, field, val) => { db.setFlightActivity(acId, ftId, year, i, { [field]: pf(val) }); };
+  const saveFaHM = (ftId, i, field, val) => { db.setFlightActivity(acId, ftId, year, i, { [field]: val }); };
 
   const rows = range.map(i => {
     const act = getActivity(data,acId,year,i);
@@ -379,21 +384,137 @@ function Activity({ data, db, year, range }) {
   const tfSt = {borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"};
   const tfTd = {fontWeight:700,padding:"14px 12px"};
 
+  // Dynamic sub-tabs: standard + each flight type + resume + manage
   const subs = [
     {id:"standard",l:"Standard"},
-    {id:"decouverte",l:"Découverte"},
-    {id:"initiation",l:"Initiation"},
-    {id:"bia",l:"BIA"},
-    {id:"voltige",l:"Voltige"},
-    {id:"vintage",l:"Vintage"},
+    ...flightTypes.map(ft => ({id:`ft-${ft.id}`,l:ft.name,ft})),
     {id:"resume",l:"Résumé"},
+    {id:"manage",l:"⚙ Gérer"},
   ];
+
+  // ── Flight type CRUD ──
+  const openAddFt = () => {
+    setFtForm({ name:"", color:"#6b7280", mode:"tarif", tarifKey:"", tarifKey2:"", tarifKey3:"", sortOrder: (flightTypes.length+1)*10 });
+    setFtModal("add");
+  };
+  const openEditFt = (ft) => {
+    setFtForm({ name:ft.name, color:ft.color, mode:ft.mode, tarifKey:ft.tarifKey||"", tarifKey2:ft.tarifKey2||"", tarifKey3:ft.tarifKey3||"", sortOrder:ft.sortOrder||0 });
+    setFtModal(ft.id);
+  };
+  const autoKey = (name) => "tarif" + name.replace(/[^a-zA-Z0-9]/g,"");
+  const saveFt = async () => {
+    if (!ftForm.name.trim()) return;
+    const payload = {
+      name: ftForm.name.trim(), color: ftForm.color, mode: ftForm.mode, sortOrder: pf(ftForm.sortOrder),
+      tarifKey: ftForm.mode !== "direct" ? (ftForm.tarifKey || autoKey(ftForm.name)) : null,
+      tarifKey2: ftForm.mode === "pax3" ? (ftForm.tarifKey2 || autoKey(ftForm.name)+"2pax") : null,
+      tarifKey3: ftForm.mode === "pax3" ? (ftForm.tarifKey3 || autoKey(ftForm.name)+"3pax") : null,
+    };
+    if (ftModal === "add") await db.addFlightType(payload);
+    else await db.updateFlightType(ftModal, payload);
+    setFtModal(null);
+  };
+  const deleteFt = async (id) => {
+    if (!confirm("Supprimer ce type de vol et toute son activité ?")) return;
+    await db.deleteFlightType(id);
+    if (sub === `ft-${id}`) setSub("standard");
+  };
+
+  // ── Render a flight type sub-tab ──
+  const renderFlightTypeTab = (ft) => {
+    const ftAgg = agg.ftRevenues[ft.id] || { heures:0, vols:0, vols2:0, vols3:0, revenu:0 };
+    const ftColor = ft.color || "var(--accent)";
+
+    if (ft.mode === "pax3") {
+      return (<div className="card">
+        <div className="card-h"><h2>{ft.name} <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
+        <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Nb vols par catégorie passagers. Revenu = vols × tarif (défini dans Tarifs & Coûts).</p>
+        <div className="tw"><table>
+          <thead><tr><th>Mois</th><th>1 pax</th><th>2 pax</th><th>3 pax</th><th>Heures</th><th style={{color:ftColor}}>Revenu €</th></tr></thead>
+          <tbody>{rows.map(r => {
+            const fa = getFlightAct(data, acId, ft.id, year, r.i);
+            const rev = (r.c.ftRevenues[ft.id]||{}).revenu || 0;
+            return (<tr key={`ft-${ft.id}-${acId}-${r.i}`}>
+              <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
+              <td><input type="number" min="0" step="1" value={fa.vols||""} placeholder="0" onChange={e=>saveFa(ft.id,r.i,"vols",e.target.value)} style={inpN}/></td>
+              <td><input type="number" min="0" step="1" value={fa.vols2||""} placeholder="0" onChange={e=>saveFa(ft.id,r.i,"vols2",e.target.value)} style={inpN}/></td>
+              <td><input type="number" min="0" step="1" value={fa.vols3||""} placeholder="0" onChange={e=>saveFa(ft.id,r.i,"vols3",e.target.value)} style={inpN}/></td>
+              <td><HMInput value={fa.heures} onChange={v=>saveFaHM(ft.id,r.i,"heures",v)} style={inpSm}/></td>
+              <td className="num" style={{color:ftColor,fontWeight:600}}>{rev>0?fmt(rev):"—"}</td>
+            </tr>);
+          })}</tbody>
+          <tfoot><tr style={tfSt}>
+            <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
+            <td className="num" style={{color:ftColor,...tfTd}}>{ftAgg.vols||"—"}</td>
+            <td className="num" style={{color:ftColor,...tfTd}}>{ftAgg.vols2||"—"}</td>
+            <td className="num" style={{color:ftColor,...tfTd}}>{ftAgg.vols3||"—"}</td>
+            <td className="num" style={tfTd}>{fH(ftAgg.heures)}</td>
+            <td className="num" style={{color:ftColor,fontWeight:800,fontSize:15,...tfTd}}>{fmt(ftAgg.revenu)}</td>
+          </tr>
+          <tr style={{background:"var(--bg-2,#f8f9fb)"}}>
+            <td className="tx" style={{...tfTd,fontWeight:600,color:"var(--text3)"}}>Total vols</td>
+            <td colSpan="5" className="num" style={{...tfTd,fontWeight:800,fontSize:15}}>{ftAgg.vols+ftAgg.vols2+ftAgg.vols3} vol{(ftAgg.vols+ftAgg.vols2+ftAgg.vols3)>1?"s":""}</td>
+          </tr></tfoot>
+        </table></div>
+      </div>);
+    }
+
+    if (ft.mode === "direct") {
+      return (<div className="card">
+        <div className="card-h"><h2>{ft.name} <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
+        <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu saisi directement (prix variable par vol).</p>
+        <div className="tw"><table>
+          <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:ftColor}}>Revenu €</th></tr></thead>
+          <tbody>{rows.map(r => {
+            const fa = getFlightAct(data, acId, ft.id, year, r.i);
+            return (<tr key={`ft-${ft.id}-${acId}-${r.i}`}>
+              <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
+              <td><HMInput value={fa.heures} onChange={v=>saveFaHM(ft.id,r.i,"heures",v)} style={inpSm}/></td>
+              <td><input type="number" min="0" step="1" value={fa.vols||""} placeholder="0" onChange={e=>saveFa(ft.id,r.i,"vols",e.target.value)} style={inpN}/></td>
+              <td><input type="number" min="0" step="1" value={fa.revenu||""} placeholder="0 €" onChange={e=>saveFa(ft.id,r.i,"revenu",e.target.value)} style={inpE}/></td>
+            </tr>);
+          })}</tbody>
+          <tfoot><tr style={tfSt}>
+            <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
+            <td className="num" style={tfTd}>{fH(ftAgg.heures)}</td>
+            <td className="num" style={{color:ftColor,...tfTd}}>{ftAgg.vols||"—"}</td>
+            <td className="num" style={{color:ftColor,fontWeight:800,fontSize:15,...tfTd}}>{fmt(ftAgg.revenu)}</td>
+          </tr></tfoot>
+        </table></div>
+      </div>);
+    }
+
+    // mode === "tarif" (default)
+    return (<div className="card">
+      <div className="card-h"><h2>{ft.name} <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu = nb vols × tarif (défini dans Tarifs & Coûts).</p>
+      <div className="tw"><table>
+        <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:ftColor}}>Revenu €</th></tr></thead>
+        <tbody>{rows.map(r => {
+          const fa = getFlightAct(data, acId, ft.id, year, r.i);
+          const rev = (r.c.ftRevenues[ft.id]||{}).revenu || 0;
+          return (<tr key={`ft-${ft.id}-${acId}-${r.i}`}>
+            <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
+            <td><HMInput value={fa.heures} onChange={v=>saveFaHM(ft.id,r.i,"heures",v)} style={inpSm}/></td>
+            <td><input type="number" min="0" step="1" value={fa.vols||""} placeholder="0" onChange={e=>saveFa(ft.id,r.i,"vols",e.target.value)} style={inpN}/></td>
+            <td className="num" style={{color:ftColor,fontWeight:600}}>{rev>0?fmt(rev):"—"}</td>
+          </tr>);
+        })}</tbody>
+        <tfoot><tr style={tfSt}>
+          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
+          <td className="num" style={tfTd}>{fH(ftAgg.heures)}</td>
+          <td className="num" style={{color:ftColor,...tfTd}}>{ftAgg.vols||"—"}</td>
+          <td className="num" style={{color:ftColor,fontWeight:800,fontSize:15,...tfTd}}>{fmt(ftAgg.revenu)}</td>
+        </tr></tfoot>
+      </table></div>
+    </div>);
+  };
 
   return (<div>
     <div className="sec-t">Avion</div>
     <div className="chips">{data.aircraft.map(a => <button key={a.id} className={`chip ${acId===a.id?"on":""}`} onClick={() => setAcId(a.id)}>{a.immat} — {a.type}</button>)}</div>
 
-    <div className="chips" style={{marginTop:8}}>{subs.map(s => <button key={s.id} className={`chip ${sub===s.id?"on":""}`} onClick={() => setSub(s.id)}>{s.l}</button>)}</div>
+    <div className="chips" style={{marginTop:8}}>{subs.map(s => <button key={s.id} className={`chip ${sub===s.id?"on":""}`} onClick={() => setSub(s.id)} style={s.ft?{borderColor:s.ft.color}:{}}>{s.l}</button>)}</div>
 
     {/* ── STANDARD ── */}
     {sub === "standard" && <div className="card">
@@ -424,118 +545,8 @@ function Activity({ data, db, year, range }) {
       </table></div>
     </div>}
 
-    {/* ── DÉCOUVERTE ── */}
-    {sub === "decouverte" && <div className="card">
-      <div className="card-h"><h2>Vols découverte <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Nb vols par catégorie passagers. Revenu = vols × tarif (défini dans Tarifs & Coûts).</p>
-      <div className="tw"><table>
-        <thead><tr><th>Mois</th><th>1 pax</th><th>2 pax</th><th>3 pax</th><th>Heures</th><th style={{color:"#8b5cf6"}}>Revenu €</th></tr></thead>
-        <tbody>{rows.map(r => (<tr key={`d-${acId}-${r.i}`}>
-          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
-          <td><input type="number" min="0" step="1" value={r.act.volsDec1pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec1pax",e.target.value)} style={inpN}/></td>
-          <td><input type="number" min="0" step="1" value={r.act.volsDec2pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec2pax",e.target.value)} style={inpN}/></td>
-          <td><input type="number" min="0" step="1" value={r.act.volsDec3pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec3pax",e.target.value)} style={inpN}/></td>
-          <td><HMInput value={r.act.heuresDecouverte} onChange={v=>saveHM(r.i,"heuresDecouverte",v)} style={inpSm}/></td>
-          <td className="num" style={{color:"#8b5cf6",fontWeight:600}}>{r.c.revenuDecouverte>0?fmt(r.c.revenuDecouverte):"—"}</td>
-        </tr>))}</tbody>
-        <tfoot><tr style={tfSt}>
-          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
-          <td className="num" style={{color:"#8b5cf6",...tfTd}}>{agg.volsDec1pax||"—"}</td>
-          <td className="num" style={{color:"#8b5cf6",...tfTd}}>{agg.volsDec2pax||"—"}</td>
-          <td className="num" style={{color:"#8b5cf6",...tfTd}}>{agg.volsDec3pax||"—"}</td>
-          <td className="num" style={tfTd}>{fH(agg.hDec)}</td>
-          <td className="num" style={{color:"#8b5cf6",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuDecouverte)}</td>
-        </tr>
-        <tr style={{background:"var(--bg-2,#f8f9fb)"}}>
-          <td className="tx" style={{...tfTd,fontWeight:600,color:"var(--text3)"}}>Total vols</td>
-          <td colSpan="5" className="num" style={{...tfTd,fontWeight:800,fontSize:15}}>{agg.volsDecouverte} vol{agg.volsDecouverte>1?"s":""}</td>
-        </tr></tfoot>
-      </table></div>
-    </div>}
-
-    {/* ── INITIATION ── */}
-    {sub === "initiation" && <div className="card">
-      <div className="card-h"><h2>Vols d&apos;initiation <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu = nb vols × tarif initiation (défini dans Tarifs & Coûts).</p>
-      <div className="tw"><table>
-        <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:"var(--orange)"}}>Revenu €</th></tr></thead>
-        <tbody>{rows.map(r => (<tr key={`i-${acId}-${r.i}`}>
-          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
-          <td><HMInput value={r.act.heuresInitiation} onChange={v=>saveHM(r.i,"heuresInitiation",v)} style={inpSm}/></td>
-          <td><input type="number" min="0" step="1" value={r.act.volsInitiation||""} placeholder="0" onChange={e=>save(r.i,"volsInitiation",e.target.value)} style={inpN}/></td>
-          <td className="num" style={{color:"var(--orange)",fontWeight:600}}>{r.c.revenuInitiation>0?fmt(r.c.revenuInitiation):"—"}</td>
-        </tr>))}</tbody>
-        <tfoot><tr style={tfSt}>
-          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
-          <td className="num" style={tfTd}>{fH(agg.hInit)}</td>
-          <td className="num" style={{color:"var(--orange)",...tfTd}}>{agg.volsInitiation||"—"}</td>
-          <td className="num" style={{color:"var(--orange)",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuInitiation)}</td>
-        </tr></tfoot>
-      </table></div>
-    </div>}
-
-    {/* ── BIA ── */}
-    {sub === "bia" && <div className="card">
-      <div className="card-h"><h2>Vols BIA <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu saisi directement (prix variable par vol).</p>
-      <div className="tw"><table>
-        <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:"var(--green)"}}>Revenu €</th></tr></thead>
-        <tbody>{rows.map(r => (<tr key={`b-${acId}-${r.i}`}>
-          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
-          <td><HMInput value={r.act.heuresBia} onChange={v=>saveHM(r.i,"heuresBia",v)} style={inpSm}/></td>
-          <td><input type="number" min="0" step="1" value={r.act.volsBia||""} placeholder="0" onChange={e=>save(r.i,"volsBia",e.target.value)} style={inpN}/></td>
-          <td><input type="number" min="0" step="1" value={r.act.revenuBia||""} placeholder="0 €" onChange={e=>save(r.i,"revenuBia",e.target.value)} style={inpE}/></td>
-        </tr>))}</tbody>
-        <tfoot><tr style={tfSt}>
-          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
-          <td className="num" style={tfTd}>{fH(agg.hBia)}</td>
-          <td className="num" style={{color:"var(--green)",...tfTd}}>{agg.volsBia||"—"}</td>
-          <td className="num" style={{color:"var(--green)",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuBia)}</td>
-        </tr></tfoot>
-      </table></div>
-    </div>}
-
-    {/* ── VOLTIGE DÉCOUVERTE ── */}
-    {sub === "voltige" && <div className="card">
-      <div className="card-h"><h2>Voltige découverte <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu = nb vols × tarif voltige découverte (défini dans Tarifs & Coûts).</p>
-      <div className="tw"><table>
-        <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:"var(--purple)"}}>Revenu €</th></tr></thead>
-        <tbody>{rows.map(r => (<tr key={`v-${acId}-${r.i}`}>
-          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
-          <td><HMInput value={r.act.heuresVoltigeDec} onChange={v=>saveHM(r.i,"heuresVoltigeDec",v)} style={inpSm}/></td>
-          <td><input type="number" min="0" step="1" value={r.act.volsVoltigeDec||""} placeholder="0" onChange={e=>save(r.i,"volsVoltigeDec",e.target.value)} style={inpN}/></td>
-          <td className="num" style={{color:"var(--purple)",fontWeight:600}}>{r.c.revenuVoltigeDec>0?fmt(r.c.revenuVoltigeDec):"—"}</td>
-        </tr>))}</tbody>
-        <tfoot><tr style={tfSt}>
-          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
-          <td className="num" style={tfTd}>{fH(agg.hVoltigeDec)}</td>
-          <td className="num" style={{color:"var(--purple)",...tfTd}}>{agg.volsVoltigeDec||"—"}</td>
-          <td className="num" style={{color:"var(--purple)",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuVoltigeDec)}</td>
-        </tr></tfoot>
-      </table></div>
-    </div>}
-
-    {/* ── VINTAGE ── */}
-    {sub === "vintage" && <div className="card">
-      <div className="card-h"><h2>Vols vintage <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu = nb vols × tarif vintage (défini dans Tarifs & Coûts).</p>
-      <div className="tw"><table>
-        <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:"var(--accent)"}}>Revenu €</th></tr></thead>
-        <tbody>{rows.map(r => (<tr key={`vt-${acId}-${r.i}`}>
-          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
-          <td><HMInput value={r.act.heuresVintage} onChange={v=>saveHM(r.i,"heuresVintage",v)} style={inpSm}/></td>
-          <td><input type="number" min="0" step="1" value={r.act.volsVintage||""} placeholder="0" onChange={e=>save(r.i,"volsVintage",e.target.value)} style={inpN}/></td>
-          <td className="num" style={{color:"var(--accent)",fontWeight:600}}>{r.c.revenuVintage>0?fmt(r.c.revenuVintage):"—"}</td>
-        </tr>))}</tbody>
-        <tfoot><tr style={tfSt}>
-          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
-          <td className="num" style={tfTd}>{fH(agg.hVintage)}</td>
-          <td className="num" style={{color:"var(--accent)",...tfTd}}>{agg.volsVintage||"—"}</td>
-          <td className="num" style={{color:"var(--accent)",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuVintage)}</td>
-        </tr></tfoot>
-      </table></div>
-    </div>}
+    {/* ── DYNAMIC FLIGHT TYPE TABS ── */}
+    {flightTypes.map(ft => sub === `ft-${ft.id}` && <div key={ft.id}>{renderFlightTypeTab(ft)}</div>)}
 
     {/* ── RÉSUMÉ ── */}
     {sub === "resume" && <div className="card">
@@ -545,11 +556,11 @@ function Activity({ data, db, year, range }) {
           <thead><tr><th>Type de vol</th><th>Heures</th><th>Nb vols</th><th>Revenu</th></tr></thead>
           <tbody>
             <tr><td className="tx" style={{fontWeight:600}}>Standard (CdB+DC)</td><td className="num">{fH(agg.heuresPilote)}</td><td className="num">—</td><td className="num" style={{color:"var(--accent)",fontWeight:700}}>{fmt(agg.revenuPilote)}</td></tr>
-            <tr><td className="tx" style={{fontWeight:600}}>Découverte</td><td className="num">{fH(agg.hDec)}</td><td className="num">{agg.volsDecouverte||"—"}</td><td className="num" style={{color:"#8b5cf6",fontWeight:700}}>{fmt(agg.revenuDecouverte)}</td></tr>
-            <tr><td className="tx" style={{fontWeight:600}}>Initiation</td><td className="num">{fH(agg.hInit)}</td><td className="num">{agg.volsInitiation||"—"}</td><td className="num" style={{color:"var(--orange)",fontWeight:700}}>{fmt(agg.revenuInitiation)}</td></tr>
-            <tr><td className="tx" style={{fontWeight:600}}>BIA</td><td className="num">{fH(agg.hBia)}</td><td className="num">{agg.volsBia||"—"}</td><td className="num" style={{color:"var(--green)",fontWeight:700}}>{fmt(agg.revenuBia)}</td></tr>
-            <tr><td className="tx" style={{fontWeight:600}}>Voltige découverte</td><td className="num">{fH(agg.hVoltigeDec)}</td><td className="num">{agg.volsVoltigeDec||"—"}</td><td className="num" style={{color:"var(--purple)",fontWeight:700}}>{fmt(agg.revenuVoltigeDec)}</td></tr>
-            <tr><td className="tx" style={{fontWeight:600}}>Vintage</td><td className="num">{fH(agg.hVintage)}</td><td className="num">{agg.volsVintage||"—"}</td><td className="num" style={{fontWeight:700}}>{fmt(agg.revenuVintage)}</td></tr>
+            {flightTypes.map(ft => {
+              const fa = agg.ftRevenues[ft.id] || { heures:0, vols:0, vols2:0, vols3:0, revenu:0 };
+              const totalVols = ft.mode === "pax3" ? fa.vols + fa.vols2 + fa.vols3 : fa.vols;
+              return <tr key={ft.id}><td className="tx" style={{fontWeight:600}}><span style={{display:"inline-block",width:8,height:8,borderRadius:4,background:ft.color,marginRight:6}}/>{ft.name}</td><td className="num">{fH(fa.heures)}</td><td className="num">{totalVols||"—"}</td><td className="num" style={{color:ft.color,fontWeight:700}}>{fmt(fa.revenu)}</td></tr>;
+            })}
           </tbody>
           <tfoot><tr style={tfSt}>
             <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
@@ -560,6 +571,47 @@ function Activity({ data, db, year, range }) {
         </table></div>
       </div>
     </div>}
+
+    {/* ── MANAGE FLIGHT TYPES ── */}
+    {sub === "manage" && <div className="card">
+      <div className="card-h"><h2>Gérer les types de vol</h2><button className="btn btn-p btn-s" onClick={openAddFt}>+ Ajouter</button></div>
+      <div className="card-b">
+        <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Créez, modifiez ou supprimez des types de vol. Chaque type = un onglet dans Activité.</p>
+        {flightTypes.length === 0 && <div style={{color:"var(--text3)",fontSize:13}}>Aucun type de vol configuré.</div>}
+        {flightTypes.map(ft => (
+          <div key={ft.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:10,border:"1px solid var(--border)",marginBottom:8,background:"var(--bg)"}}>
+            <div style={{width:12,height:12,borderRadius:6,background:ft.color,flexShrink:0}}/>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:14}}>{ft.name}</div>
+              <div style={{fontSize:12,color:"var(--text3)"}}>Mode : {ft.mode === "pax3" ? "Multi-passagers" : ft.mode === "direct" ? "Saisie directe" : "Tarif × vols"}{ft.tarifKey ? ` · Clé : ${ft.tarifKey}` : ""}</div>
+            </div>
+            <button className="btn btn-s" onClick={() => openEditFt(ft)}>Modifier</button>
+            <button className="btn btn-s btn-d btn-ghost" onClick={() => deleteFt(ft.id)}>✕</button>
+          </div>
+        ))}
+      </div>
+    </div>}
+
+    {/* ── Flight type modal ── */}
+    {ftModal && (<div className="mo" onClick={() => setFtModal(null)}><div className="mod" onClick={e => e.stopPropagation()}>
+      <div className="mod-h"><h3>{ftModal === "add" ? "Nouveau type de vol" : "Modifier le type de vol"}</h3><button className="btn btn-s btn-ghost" onClick={() => setFtModal(null)}>✕</button></div>
+      <div className="mod-b"><div className="fg">
+        <div className="fi"><label>Nom</label><input type="text" value={ftForm.name} onChange={e => setFtForm(f=>({...f,name:e.target.value}))}/></div>
+        <div className="fi"><label>Couleur</label><input type="color" value={ftForm.color} onChange={e => setFtForm(f=>({...f,color:e.target.value}))}/></div>
+        <div className="fi"><label>Mode de calcul</label>
+          <select value={ftForm.mode} onChange={e => setFtForm(f=>({...f,mode:e.target.value}))}>
+            <option value="tarif">Tarif × nb vols</option>
+            <option value="pax3">Multi-passagers (1/2/3 pax)</option>
+            <option value="direct">Saisie directe du revenu</option>
+          </select>
+        </div>
+        <div className="fi"><label>Ordre d&apos;affichage</label><input type="number" step="1" value={ftForm.sortOrder} onChange={e => setFtForm(f=>({...f,sortOrder:pf(e.target.value)}))}/></div>
+        {ftForm.mode !== "direct" && <div className="fi"><label>Clé tarif{ftForm.mode === "pax3" ? " (1 pax)" : ""}</label><input type="text" value={ftForm.tarifKey} placeholder={autoKey(ftForm.name||"nom")} onChange={e => setFtForm(f=>({...f,tarifKey:e.target.value}))}/></div>}
+        {ftForm.mode === "pax3" && <><div className="fi"><label>Clé tarif 2 pax</label><input type="text" value={ftForm.tarifKey2} placeholder={autoKey(ftForm.name||"nom")+"2pax"} onChange={e => setFtForm(f=>({...f,tarifKey2:e.target.value}))}/></div>
+        <div className="fi"><label>Clé tarif 3 pax</label><input type="text" value={ftForm.tarifKey3} placeholder={autoKey(ftForm.name||"nom")+"3pax"} onChange={e => setFtForm(f=>({...f,tarifKey3:e.target.value}))}/></div></>}
+      </div></div>
+      <div className="mod-f"><button className="btn" onClick={() => setFtModal(null)}>Annuler</button><button className="btn btn-p" onClick={saveFt}>Enregistrer</button></div>
+    </div></div>)}
   </div>);
 }
 
@@ -570,7 +622,8 @@ function Rates({ data, db, modal, setModal }) {
   const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
   const [form, setForm] = useState({ field:"", value:"", fromDate:todayStr, global:false, isBool:false });
 
-  const allFieldDefs = [...RATE_GROUPS.flatMap(g => g.fields), ...GLOBAL_RATE_FIELDS];
+  const dynamicRateGroups = getAllRateGroups(data.flightTypes);
+  const allFieldDefs = [...dynamicRateGroups.flatMap(g => g.fields), ...GLOBAL_RATE_FIELDS];
   const openAdd = (fieldKey, isGlobal) => {
     const def = allFieldDefs.find(f => f.key === fieldKey);
     setForm({field:fieldKey, value:def?.isBool ? "0" : "", fromDate:todayStr, global:isGlobal, isBool:!!def?.isBool});
@@ -664,7 +717,7 @@ function Rates({ data, db, modal, setModal }) {
     <div className="chips">{data.aircraft.map(a => <button key={a.id} className={`chip ${acId===a.id?"on":""}`} onClick={() => setAcId(a.id)}>{a.immat}</button>)}</div>
     <p style={{fontSize:13,color:"var(--text3)",marginBottom:20}}>Chaque valeur s&apos;applique à partir de la date indiquée jusqu&apos;à ce qu&apos;une nouvelle la remplace.</p>
 
-    {RATE_GROUPS.map(group => (
+    {dynamicRateGroups.map(group => (
       <div className="card" key={group.group}>
         <div className="card-h"><h2>{group.group}</h2></div>
         <div className="card-b">
@@ -678,7 +731,7 @@ function Rates({ data, db, modal, setModal }) {
               {periods.length === 0 && <div style={{fontSize:13,color:"var(--text3)",padding:"8px 0"}}>Aucune valeur définie</div>}
               {periods.map(p => (<div className="rate-period" key={p.id}>
                 <div className="rp-date">À partir du {String(p.fromDay||1).padStart(2,"0")}/{String((p.fromMonth||0)+1).padStart(2,"0")}/{p.fromYear}</div>
-                <div className="rp-val">{field.isBool ? (p.value >= 1 ? <span className="tag tag-o">Block-Block</span> : <span className="tag tag-g">Roulage</span>) : fmt2(p.value)}</div>
+                <div className="rp-val">{fmt2(p.value)}</div>
                 <div style={{flex:1}}/>
                 <button className="btn btn-s btn-d btn-ghost" onClick={() => db.deleteRate(p.id)}>✕</button>
               </div>))}
@@ -693,11 +746,7 @@ function Rates({ data, db, modal, setModal }) {
       <div className="mod-h"><h3>Nouvelle période {form.global?"(club)":""}</h3><button className="btn btn-s btn-ghost" onClick={() => setModal(null)}>✕</button></div>
       <div className="mod-b"><div className="fg">
         <div className="fi"><label>Date d&apos;effet</label><input type="date" value={form.fromDate} onChange={e => setForm(f => ({...f,fromDate:e.target.value}))}/></div>
-        {form.isBool ? (
-          <div className="fi"><label>Mode</label><select value={form.value} onChange={e => setForm(f => ({...f,value:e.target.value}))}><option value="0">Forfait roulage</option><option value="1">Block-Block</option></select></div>
-        ) : (
-          <div className="fi"><label>Valeur</label><input type="number" step="0.01" value={form.value} placeholder="0" onChange={e => setForm(f => ({...f,value:e.target.value}))}/></div>
-        )}
+        <div className="fi"><label>Valeur</label><input type="number" step="0.01" value={form.value} placeholder="0" onChange={e => setForm(f => ({...f,value:e.target.value}))}/></div>
       </div></div>
       <div className="mod-f"><button className="btn" onClick={() => setModal(null)}>Annuler</button><button className="btn btn-p" onClick={save}>Enregistrer</button></div>
     </div></div>)}
@@ -1313,7 +1362,7 @@ function Simulation({ data, year, range }) {
     const fleetProj = globAggWithOverrides(data, year, range, overrides);
     const hasOv = Object.keys(ov).length > 0;
 
-    const allFields = RATE_GROUPS.flatMap(g => g.fields);
+    const simRateGroups = getAllRateGroups(data.flightTypes);
 
     return (<>
       <div className="sec-t">Avion</div>
@@ -1323,7 +1372,7 @@ function Simulation({ data, year, range }) {
         <div className="card-h"><h2>Paramètres simulés <span className="badge">{ac.immat}</span></h2>{hasOv && <button className="btn btn-s btn-d" onClick={() => clearOv(selAc)}>Réinitialiser</button>}</div>
         <div className="card-b">
           <p style={{fontSize:13,color:"var(--text3)",marginBottom:16}}>Modifiez les valeurs pour simuler. Les champs modifiés sont surlignés en bleu.</p>
-          {RATE_GROUPS.map(group => (
+          {simRateGroups.map(group => (
             <div key={group.group} style={{marginBottom:20}}>
               <div className="sec-t">{group.group}</div>
               <div className="fg">
@@ -1379,21 +1428,19 @@ function Simulation({ data, year, range }) {
           <thead><tr><th>Poste</th><th>Actuel</th><th>Projeté</th><th>Delta</th></tr></thead>
           <tbody>
             {[
-              {l:"Rev. Pilotes (CdB+DC)",a:(cur.revenuVolCdb||0)+(cur.revenuVolDc||0),p:(proj.revenuVolCdb||0)+(proj.revenuVolDc||0)},
-              {l:"Rev. Découverte",a:cur.revenuDecouverte||0,p:proj.revenuDecouverte||0},
-              {l:"Rev. Initiation",a:cur.revenuInitiation||0,p:proj.revenuInitiation||0},
-              {l:"Rev. BIA",a:cur.revenuBia||0,p:proj.revenuBia||0},
-              {l:"Revenus total",a:cur.revenu,p:proj.revenu},
+              {l:"Rev. Pilotes (CdB+DC)",a:cur.revenuPilote||0,p:proj.revenuPilote||0,isRev:true},
+              ...(data.flightTypes||[]).map(ft => ({l:`Rev. ${ft.name}`,a:(cur.ftRevenues[ft.id]||{}).revenu||0,p:(proj.ftRevenues[ft.id]||{}).revenu||0,isRev:true})),
+              {l:"Revenus total",a:cur.revenu,p:proj.revenu,isRev:true},
               {l:"Carburant & huile",a:cur.variable,p:proj.variable},{l:"Prêts",a:cur.loan,p:proj.loan},
               {l:"Opérations",a:cur.opsC,p:proj.opsC},{l:"Total dépenses",a:cur.depenses,p:proj.depenses},
-              {l:"Résultat",a:cur.resultat,p:proj.resultat},
+              {l:"Résultat",a:cur.resultat,p:proj.resultat,isRev:true},
             ].map(r => {
               const d = r.p - r.a;
               return (<tr key={r.l}>
                 <td className="tx" style={{fontWeight:600}}>{r.l}</td>
                 <td className="num">{fmt(r.a)}</td>
                 <td className="num">{fmt(r.p)}</td>
-                <td>{d !== 0 && <span className={`delta ${(r.l==="Résultat"||r.l==="Revenus"?(d>=0):(d<=0))?"delta-up":"delta-dn"}`}>{d>0?"+":""}{fmt(d)}</span>}</td>
+                <td>{d !== 0 && <span className={`delta ${(r.isRev?(d>=0):(d<=0))?"delta-up":"delta-dn"}`}>{d>0?"+":""}{fmt(d)}</span>}</td>
               </tr>);
             })}
           </tbody>
@@ -1453,7 +1500,7 @@ function Simulation({ data, year, range }) {
   const SensitivityMode = () => {
     const ac = data.aircraft.find(a => a.id === sensAc);
     if (!ac) return null;
-    const allFields = RATE_GROUPS.flatMap(g => g.fields);
+    const allFields = getAllRateGroups(data.flightTypes).flatMap(g => g.fields);
     const curVal = getRate(data.rates, sensAc, sensField, year, lm);
     const steps = [];
     for (let i = -3; i <= 3; i++) {
@@ -1589,6 +1636,10 @@ function ImportCSV({ data, db }) {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
   const [importYear, setImportYear] = useState(new Date().getFullYear());
+  const [importTarget, setImportTarget] = useState("standard"); // "standard" or flight type id
+
+  const flightTypes = data.flightTypes || [];
+  const targetFt = flightTypes.find(ft => ft.id === importTarget);
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
@@ -1622,17 +1673,25 @@ function ImportCSV({ data, db }) {
       if (ac) immatMap[immat] = ac.id;
     }
 
-    // Import monthly data
+    // Import data to target
     for (const row of agg.monthly) {
       const acId = immatMap[row.immat];
       if (!acId) { skipped++; continue; }
-      await db.setMonthly(acId, row.year, row.month, { heures: row.heures, rotations: row.rotations, heuresDc: row.heuresDc });
+      if (importTarget === "standard") {
+        await db.setMonthly(acId, row.year, row.month, { heures: row.heures, rotations: row.rotations, heuresDc: row.heuresDc });
+      } else {
+        // Import to flight type: heures CdB → heures, rotations → vols
+        await db.setFlightActivity(acId, importTarget, row.year, row.month, {
+          heures: row.heures + row.heuresDc,
+          vols: row.rotations,
+        });
+      }
       imported++;
     }
 
     const nbAc = new Set(agg.monthly.map(r => r.immat)).size;
     const nbMo = new Set(agg.monthly.map(r => r.month)).size;
-    setResult({ imported, skipped, newAircraft: agg.unknownImmats.length, nbAc, nbMo, year: importYear });
+    setResult({ imported, skipped, newAircraft: agg.unknownImmats.length, nbAc, nbMo, year: importYear, target: importTarget === "standard" ? "Standard" : (targetFt?.name || importTarget) });
     setImporting(false);
     setStep("done");
     db.reload();
@@ -1657,7 +1716,17 @@ function ImportCSV({ data, db }) {
                 {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
               </select>
             </div>
+            <div className="fi">
+              <label>Importer dans</label>
+              <select value={importTarget} onChange={e => setImportTarget(e.target.value)}>
+                <option value="standard">Standard (CdB / DC)</option>
+                {flightTypes.map(ft => <option key={ft.id} value={ft.id}>{ft.name}</option>)}
+              </select>
+            </div>
           </div>
+          {importTarget !== "standard" && <div style={{fontSize:12,color:"var(--orange)",marginBottom:16,padding:"8px 14px",background:"var(--orange-s)",borderRadius:8}}>
+            Import vers <strong>{targetFt?.name}</strong> : les heures CdB+DC seront importées comme heures, les mouvements comme nombre de vols.
+          </div>}
           <div style={{border:"2px dashed var(--border)",borderRadius:12,padding:40,textAlign:"center",background:"var(--bg)"}}>
             <input type="file" accept=".csv,.txt" onChange={handleFile} style={{fontSize:14,fontFamily:"inherit"}}/>
           </div>
@@ -1744,7 +1813,7 @@ function ImportCSV({ data, db }) {
         <div className="card-h"><h2 style={{color:"var(--green)"}}>Import terminé</h2></div>
         <div className="card-b" style={{textAlign:"center",padding:40}}>
           <div style={{fontSize:48,marginBottom:12}}>✓</div>
-          <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>Import {result.year} terminé — {result.nbAc} avions × {result.nbMo} mois</div>
+          <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>Import {result.year} terminé — {result.nbAc} avions × {result.nbMo} mois{result.target ? ` → ${result.target}` : ""}</div>
           {result.newAircraft > 0 && <div style={{fontSize:13,color:"var(--orange)",marginBottom:4}}>{result.newAircraft} avion(s) créé(s)</div>}
           {result.skipped > 0 && <div style={{fontSize:13,color:"var(--text3)"}}>{result.skipped} ignoré(s)</div>}
           <button className="btn btn-p" onClick={reset} style={{marginTop:20}}>Nouvel import</button>
