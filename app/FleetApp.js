@@ -4,6 +4,7 @@ import { useFleetData } from "../lib/useFleetData";
 import { YEARS, MO, MOS, QL, QM, ALL12, pf, fmt, fmt2, fH, fP, hmToDecimal, decimalToHM, RATE_GROUPS, GLOBAL_RATE_FIELDS, getDynamicRateFields, getAllRateGroups, getRate, getGlobalRate, getActivity, getFlightAct, flightTypeRevenue, loanPayment, calcMonth, aggAC, globAgg, calcMonthWithOverrides, aggACWithOverrides, globAggWithOverrides, breakEvenHours, sensitivityAnalysis, isAircraftActive, isAircraftActiveYear, getFuelTypes, getOilTypes, getFuelPrice, getOilPrice } from "../lib/calc";
 import { parseFlightCSV, aggregateFlights } from "../lib/csvImport";
 import { parseOpsXLSX } from "../lib/xlsxOpsImport";
+import * as XLSX from "xlsx";
 
 export default function FleetApp({ onLogout }) {
   const db = useFleetData();
@@ -27,7 +28,7 @@ export default function FleetApp({ onLogout }) {
     { id:"ops", l:"Opérations" },
     { id:"loans", l:"Prêts" },
     { id:"sim", l:"Simulation" },
-    { id:"import", l:"Import CSV" },
+    { id:"import", l:"Import" },
     { id:"fleet", l:"Flotte" },
   ];
 
@@ -1645,9 +1646,18 @@ function ImportCSV({ data, db }) {
   const handleFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const isXlsx = /\.xlsx?$/i.test(file.name);
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const text = ev.target.result;
+      let text;
+      if (isXlsx) {
+        // Convert XLSX to CSV via SheetJS, then parse as CSV
+        const wb = XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        text = XLSX.utils.sheet_to_csv(ws, { FS: ";" });
+      } else {
+        text = ev.target.result;
+      }
       const p = parseFlightCSV(text, importYear);
       setParsed(p);
       if (!p.error && p.flights.length > 0) {
@@ -1658,7 +1668,8 @@ function ImportCSV({ data, db }) {
         setParsed({ ...p, error: `Aucun vol trouvé pour l'année ${importYear}. Vérifiez le fichier ou changez l'année.` });
       }
     };
-    reader.readAsText(file, "UTF-8");
+    if (isXlsx) reader.readAsArrayBuffer(file);
+    else reader.readAsText(file, "UTF-8");
   };
 
   const doImport = async () => {
@@ -1726,10 +1737,10 @@ function ImportCSV({ data, db }) {
     {/* ── Step 1: Upload ── */}
     {step === "upload" && (
       <div className="card">
-        <div className="card-h"><h2>Import CSV Aerogest</h2></div>
+        <div className="card-h"><h2>Import vols (CSV / XLSX)</h2></div>
         <div className="card-b">
           <p style={{fontSize:13,color:"var(--text2)",marginBottom:16,lineHeight:1.8}}>
-            Importez un fichier CSV par année. Seuls les vols de l&apos;année sélectionnée seront importés.<br/>
+            Importez un fichier CSV ou Excel (.xlsx) par année. Seuls les vols de l&apos;année sélectionnée seront importés.<br/>
             Colonnes attendues : Date, Aéronef, Durée, Mode (DC/CDB), etc.
           </p>
           <div className="fg" style={{marginBottom:20}}>
@@ -1759,7 +1770,7 @@ function ImportCSV({ data, db }) {
             {importTarget !== "standard" && <>Import vers <strong>{targetFt?.name}</strong> : les heures CdB+DC seront importées comme heures, les mouvements comme nombre de vols.</>}
           </div>}
           <div style={{border:"2px dashed var(--border)",borderRadius:12,padding:40,textAlign:"center",background:"var(--bg)"}}>
-            <input type="file" accept=".csv,.txt" onChange={handleFile} style={{fontSize:14,fontFamily:"inherit"}}/>
+            <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={handleFile} style={{fontSize:14,fontFamily:"inherit"}}/>
           </div>
           {parsed?.error && <div style={{color:"var(--red)",marginTop:16,fontSize:13,fontWeight:600}}>{parsed.error}</div>}
         </div>
