@@ -427,15 +427,12 @@ function Activity({ data, db, year, range }) {
         <thead><tr>
           <th>Mois</th>
           <th style={{color:"var(--accent)"}}>Pilotes €</th>
-          <th style={{color:"#8b5cf6"}}>Déc. h</th>
           <th style={{color:"#8b5cf6"}}>Déc. 1pax</th>
           <th style={{color:"#8b5cf6"}}>Déc. 2pax</th>
           <th style={{color:"#8b5cf6"}}>Déc. 3pax</th>
           <th style={{color:"#8b5cf6"}}>Déc. €</th>
-          <th style={{color:"var(--orange)"}}>Init. h</th>
           <th style={{color:"var(--orange)"}}>Init. vols</th>
           <th style={{color:"var(--orange)"}}>Init. €</th>
-          <th style={{color:"var(--green)"}}>BIA h</th>
           <th style={{color:"var(--green)"}}>BIA vols</th>
           <th style={{color:"var(--green)"}}>BIA €</th>
           <th>Total</th>
@@ -444,15 +441,12 @@ function Activity({ data, db, year, range }) {
           <tr key={`r-${acId}-${r.i}`}>
             <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
             <td className="num" style={{color:"var(--accent)"}}>{r.c.revenuPilote>0?fmt(r.c.revenuPilote):"—"}</td>
-            <td><HMInput value={r.act.heuresDecouverte} onChange={v=>saveHM(r.i,"heuresDecouverte",v)} style={inpSm}/></td>
             <td><input type="number" min="0" step="1" value={r.act.volsDec1pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec1pax",e.target.value)} style={inpN}/></td>
             <td><input type="number" min="0" step="1" value={r.act.volsDec2pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec2pax",e.target.value)} style={inpN}/></td>
             <td><input type="number" min="0" step="1" value={r.act.volsDec3pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec3pax",e.target.value)} style={inpN}/></td>
             <td className="num" style={{color:"#8b5cf6",fontWeight:600,fontSize:12}}>{r.c.revenuDecouverte>0?fmt(r.c.revenuDecouverte):"—"}</td>
-            <td><HMInput value={r.act.heuresInitiation} onChange={v=>saveHM(r.i,"heuresInitiation",v)} style={inpSm}/></td>
             <td><input type="number" min="0" step="1" value={r.act.volsInitiation||""} placeholder="0" onChange={e=>save(r.i,"volsInitiation",e.target.value)} style={inpN}/></td>
             <td className="num" style={{color:"var(--orange)",fontWeight:600,fontSize:12}}>{r.c.revenuInitiation>0?fmt(r.c.revenuInitiation):"—"}</td>
-            <td><HMInput value={r.act.heuresBia} onChange={v=>saveHM(r.i,"heuresBia",v)} style={inpSm}/></td>
             <td><input type="number" min="0" step="1" value={r.act.volsBia||""} placeholder="0" onChange={e=>save(r.i,"volsBia",e.target.value)} style={inpN}/></td>
             <td><input type="number" min="0" step="1" value={r.act.revenuBia||""} placeholder="0" onChange={e=>save(r.i,"revenuBia",e.target.value)} style={{...inpSt,width:80}}/></td>
             <td className="num" style={{fontWeight:700,color:"var(--accent)"}}>{r.c.revenu>0?fmt(r.c.revenu):"—"}</td>
@@ -461,15 +455,12 @@ function Activity({ data, db, year, range }) {
         <tfoot><tr style={{borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"}}>
           <td className="tx" style={{fontWeight:800,fontSize:13,letterSpacing:.5,padding:"14px 12px"}}>TOTAL</td>
           <td className="num" style={{color:"var(--accent)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revPilotes)}</td>
-          <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hDec)}</td>
           <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{tot.d1||"—"}</td>
           <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{tot.d2||"—"}</td>
           <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{tot.d3||"—"}</td>
           <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revDec)}</td>
-          <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hInit)}</td>
           <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{tot.volsInit||"—"}</td>
           <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revInit)}</td>
-          <td className="num" style={{color:"var(--green)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hBia)}</td>
           <td className="num" style={{color:"var(--green)",fontWeight:700,padding:"14px 12px"}}>{tot.volsBia||"—"}</td>
           <td className="num" style={{color:"var(--green)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revBia)}</td>
           <td className="num" style={{fontWeight:800,color:"var(--accent)",fontSize:15,padding:"14px 12px"}}>{fmt(tot.total)}</td>
