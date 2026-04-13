@@ -357,9 +357,11 @@ function HMInput({ value, onChange, style, placeholder }) {
 
 function Activity({ data, db, year, range }) {
   const [acId, setAcId] = useState(data.aircraft[0]?.id || null);
+  const [sub, setSub] = useState("standard");
   const inpSt = {padding:"6px 10px",border:"1px solid var(--border)",borderRadius:6,fontSize:14,fontFamily:"inherit",outline:"none",background:"var(--bg)"};
   const inpSm = {...inpSt, width:60};
-  const inpN = {...inpSt, width:50};
+  const inpN = {...inpSt, width:55, textAlign:"center"};
+  const inpE = {...inpSt, width:80};
   if (!data.aircraft.length) return <div className="card"><div className="empty">Ajoutez des avions dans Flotte.</div></div>;
 
   const save = (i, field, val) => { db.setMonthly(acId, year, i, { [field]: pf(val) }); };
@@ -371,113 +373,191 @@ function Activity({ data, db, year, range }) {
     return { i, act, c };
   });
 
-  const tot = { hCdb:0, hDc:0, hDec:0, hInit:0, hBia:0, mvts:0, litres:0, d1:0, d2:0, d3:0, volsDec:0, volsInit:0, volsBia:0, revPilotes:0, revDec:0, revInit:0, revBia:0, total:0 };
-  rows.forEach(r => {
-    const a = r.act;
-    tot.hCdb += a.heures||0; tot.hDc += a.heuresDc||0; tot.hDec += a.heuresDecouverte||0;
-    tot.hInit += a.heuresInitiation||0; tot.hBia += a.heuresBia||0;
-    tot.mvts += a.rotations||0; tot.litres += a.litresCarburant||0;
-    tot.d1 += a.volsDec1pax||0; tot.d2 += a.volsDec2pax||0; tot.d3 += a.volsDec3pax||0;
-    tot.volsDec += r.c.volsDecouverte; tot.volsInit += a.volsInitiation||0; tot.volsBia += a.volsBia||0;
-    tot.revPilotes += r.c.revenuPilote; tot.revDec += r.c.revenuDecouverte; tot.revInit += r.c.revenuInitiation; tot.revBia += r.c.revenuBia; tot.total += r.c.revenu;
-  });
-
+  const agg = aggAC(data, acId, year, range);
   const periodLabel = range.length === 12 ? `${year}` : `${MOS[range[0]]}–${MOS[range[range.length-1]]} ${year}`;
+  const acLabel = data.aircraft.find(a=>a.id===acId)?.immat;
+  const tfSt = {borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"};
+  const tfTd = {fontWeight:700,padding:"14px 12px"};
+
+  const subs = [
+    {id:"standard",l:"Standard"},
+    {id:"decouverte",l:"Découverte"},
+    {id:"initiation",l:"Initiation"},
+    {id:"bia",l:"BIA"},
+    {id:"voltige",l:"Voltige"},
+    {id:"vintage",l:"Vintage"},
+    {id:"resume",l:"Résumé"},
+  ];
 
   return (<div>
     <div className="sec-t">Avion</div>
     <div className="chips">{data.aircraft.map(a => <button key={a.id} className={`chip ${acId===a.id?"on":""}`} onClick={() => setAcId(a.id)}>{a.immat} — {a.type}</button>)}</div>
 
-    {/* ── Table 1 : Heures de vol ── */}
-    <div className="card">
-      <div className="card-h"><h2>Heures de vol <span className="badge">{data.aircraft.find(a=>a.id===acId)?.immat} · {periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Heures au format H:MM. Litres carburant : si renseigné, remplace le calcul conso×heures.</p>
+    <div className="chips" style={{marginTop:8}}>{subs.map(s => <button key={s.id} className={`chip ${sub===s.id?"on":""}`} onClick={() => setSub(s.id)}>{s.l}</button>)}</div>
+
+    {/* ── STANDARD ── */}
+    {sub === "standard" && <div className="card">
+      <div className="card-h"><h2>Vols standard <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Heures au format H:MM. Revenu = (CdB+DC) × tarif horaire. Litres : si renseigné, remplace le calcul conso×heures.</p>
       <div className="tw"><table>
-        <thead><tr>
-          <th>Mois</th>
-          <th style={{color:"var(--accent)"}}>CdB</th>
-          <th style={{color:"var(--orange)"}}>DC</th>
-          <th>Mvts</th>
-          <th>Litres</th>
-        </tr></thead>
-        <tbody>{rows.map(r => (
-          <tr key={`h-${acId}-${r.i}`}>
-            <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
-            <td><HMInput value={r.act.heures} onChange={v=>saveHM(r.i,"heures",v)} style={inpSm}/></td>
-            <td><HMInput value={r.act.heuresDc} onChange={v=>saveHM(r.i,"heuresDc",v)} style={{...inpSm,borderColor:"var(--orange-s)"}}/></td>
-            <td><input type="number" step="1" min="0" value={r.act.rotations||""} placeholder="0" onChange={e=>save(r.i,"rotations",e.target.value)} style={{...inpSt,width:60,textAlign:"center",fontWeight:600}}/></td>
-            <td><input type="number" step="0.1" min="0" value={r.act.litresCarburant||""} placeholder="0" onChange={e=>save(r.i,"litresCarburant",e.target.value)} style={inpSm}/></td>
-          </tr>
-        ))}</tbody>
-        <tfoot><tr style={{borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"}}>
-          <td className="tx" style={{fontWeight:800,fontSize:13,letterSpacing:.5,padding:"14px 12px"}}>TOTAL</td>
-          <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{fH(tot.hCdb)}</td>
-          <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fH(tot.hDc)}</td>
-          <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{tot.mvts}</td>
-          <td className="num" style={{fontWeight:700,padding:"14px 12px"}}>{tot.litres>0?Math.round(tot.litres)+" L":"—"}</td>
+        <thead><tr><th>Mois</th><th style={{color:"var(--accent)"}}>CdB</th><th style={{color:"var(--orange)"}}>DC</th><th>Mvts</th><th>Litres</th><th style={{color:"var(--accent)"}}>Revenu €</th></tr></thead>
+        <tbody>{rows.map(r => (<tr key={`s-${acId}-${r.i}`}>
+          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
+          <td><HMInput value={r.act.heures} onChange={v=>saveHM(r.i,"heures",v)} style={inpSm}/></td>
+          <td><HMInput value={r.act.heuresDc} onChange={v=>saveHM(r.i,"heuresDc",v)} style={{...inpSm,borderColor:"var(--orange-s)"}}/></td>
+          <td><input type="number" step="1" min="0" value={r.act.rotations||""} placeholder="0" onChange={e=>save(r.i,"rotations",e.target.value)} style={{...inpSt,width:60,textAlign:"center",fontWeight:600}}/></td>
+          <td><input type="number" step="0.1" min="0" value={r.act.litresCarburant||""} placeholder="0" onChange={e=>save(r.i,"litresCarburant",e.target.value)} style={inpSm}/></td>
+          <td className="num" style={{color:"var(--accent)",fontWeight:600}}>{r.c.revenuPilote>0?fmt(r.c.revenuPilote):"—"}</td>
+        </tr>))}</tbody>
+        <tfoot><tr style={tfSt}>
+          <td className="tx" style={{fontWeight:800,fontSize:13,letterSpacing:.5,...tfTd}}>TOTAL</td>
+          <td className="num" style={tfTd}>{fH(agg.hCdb)}</td>
+          <td className="num" style={{color:"var(--orange)",...tfTd}}>{fH(agg.hDc)}</td>
+          <td className="num" style={tfTd}>{agg.rotations}</td>
+          <td className="num" style={tfTd}>{agg.litresCarburant>0?Math.round(agg.litresCarburant)+" L":"—"}</td>
+          <td className="num" style={{color:"var(--accent)",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuPilote)}</td>
+        </tr>
+        <tr style={{background:"var(--bg-2,#f8f9fb)"}}>
+          <td className="tx" style={{...tfTd,fontWeight:600,color:"var(--text3)"}}>Total heures</td>
+          <td colSpan="5" className="num" style={{...tfTd,fontWeight:800,fontSize:15}}>{fH(agg.hCdb + agg.hDc)}</td>
         </tr></tfoot>
       </table></div>
-    </div>
+    </div>}
 
-    {/* ── Table 2 : Revenus ── */}
-    <div className="card">
-      <div className="card-h"><h2>Revenus <span className="badge">{periodLabel}</span></h2></div>
-      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Pilotes = (CdB+DC) × tarif. Découverte = nb vols × tarif par catégorie pax. Initiation = nb vols × tarif. BIA = revenu total saisi.</p>
+    {/* ── DÉCOUVERTE ── */}
+    {sub === "decouverte" && <div className="card">
+      <div className="card-h"><h2>Vols découverte <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Nb vols par catégorie passagers. Revenu = vols × tarif (défini dans Tarifs & Coûts).</p>
       <div className="tw"><table>
-        <thead><tr>
-          <th>Mois</th>
-          <th style={{color:"var(--accent)"}}>Pilotes €</th>
-          <th style={{color:"#8b5cf6"}}>Déc. 1pax</th>
-          <th style={{color:"#8b5cf6"}}>Déc. 2pax</th>
-          <th style={{color:"#8b5cf6"}}>Déc. 3pax</th>
-          <th style={{color:"#8b5cf6"}}>Déc. €</th>
-          <th style={{color:"var(--orange)"}}>Init. vols</th>
-          <th style={{color:"var(--orange)"}}>Init. €</th>
-          <th style={{color:"var(--green)"}}>BIA vols</th>
-          <th style={{color:"var(--green)"}}>BIA €</th>
-          <th>Total</th>
-        </tr></thead>
-        <tbody>{rows.map(r => (
-          <tr key={`r-${acId}-${r.i}`}>
-            <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
-            <td className="num" style={{color:"var(--accent)"}}>{r.c.revenuPilote>0?fmt(r.c.revenuPilote):"—"}</td>
-            <td><input type="number" min="0" step="1" value={r.act.volsDec1pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec1pax",e.target.value)} style={inpN}/></td>
-            <td><input type="number" min="0" step="1" value={r.act.volsDec2pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec2pax",e.target.value)} style={inpN}/></td>
-            <td><input type="number" min="0" step="1" value={r.act.volsDec3pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec3pax",e.target.value)} style={inpN}/></td>
-            <td className="num" style={{color:"#8b5cf6",fontWeight:600,fontSize:12}}>{r.c.revenuDecouverte>0?fmt(r.c.revenuDecouverte):"—"}</td>
-            <td><input type="number" min="0" step="1" value={r.act.volsInitiation||""} placeholder="0" onChange={e=>save(r.i,"volsInitiation",e.target.value)} style={inpN}/></td>
-            <td className="num" style={{color:"var(--orange)",fontWeight:600,fontSize:12}}>{r.c.revenuInitiation>0?fmt(r.c.revenuInitiation):"—"}</td>
-            <td><input type="number" min="0" step="1" value={r.act.volsBia||""} placeholder="0" onChange={e=>save(r.i,"volsBia",e.target.value)} style={inpN}/></td>
-            <td><input type="number" min="0" step="1" value={r.act.revenuBia||""} placeholder="0" onChange={e=>save(r.i,"revenuBia",e.target.value)} style={{...inpSt,width:80}}/></td>
-            <td className="num" style={{fontWeight:700,color:"var(--accent)"}}>{r.c.revenu>0?fmt(r.c.revenu):"—"}</td>
-          </tr>
-        ))}</tbody>
-        <tfoot><tr style={{borderTop:"2px solid var(--text)",background:"var(--bg-2,#f8f9fb)"}}>
-          <td className="tx" style={{fontWeight:800,fontSize:13,letterSpacing:.5,padding:"14px 12px"}}>TOTAL</td>
-          <td className="num" style={{color:"var(--accent)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revPilotes)}</td>
-          <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{tot.d1||"—"}</td>
-          <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{tot.d2||"—"}</td>
-          <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{tot.d3||"—"}</td>
-          <td className="num" style={{color:"#8b5cf6",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revDec)}</td>
-          <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{tot.volsInit||"—"}</td>
-          <td className="num" style={{color:"var(--orange)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revInit)}</td>
-          <td className="num" style={{color:"var(--green)",fontWeight:700,padding:"14px 12px"}}>{tot.volsBia||"—"}</td>
-          <td className="num" style={{color:"var(--green)",fontWeight:700,padding:"14px 12px"}}>{fmt(tot.revBia)}</td>
-          <td className="num" style={{fontWeight:800,color:"var(--accent)",fontSize:15,padding:"14px 12px"}}>{fmt(tot.total)}</td>
+        <thead><tr><th>Mois</th><th>1 pax</th><th>2 pax</th><th>3 pax</th><th>Heures</th><th style={{color:"#8b5cf6"}}>Revenu €</th></tr></thead>
+        <tbody>{rows.map(r => (<tr key={`d-${acId}-${r.i}`}>
+          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
+          <td><input type="number" min="0" step="1" value={r.act.volsDec1pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec1pax",e.target.value)} style={inpN}/></td>
+          <td><input type="number" min="0" step="1" value={r.act.volsDec2pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec2pax",e.target.value)} style={inpN}/></td>
+          <td><input type="number" min="0" step="1" value={r.act.volsDec3pax||""} placeholder="0" onChange={e=>save(r.i,"volsDec3pax",e.target.value)} style={inpN}/></td>
+          <td><HMInput value={r.act.heuresDecouverte} onChange={v=>saveHM(r.i,"heuresDecouverte",v)} style={inpSm}/></td>
+          <td className="num" style={{color:"#8b5cf6",fontWeight:600}}>{r.c.revenuDecouverte>0?fmt(r.c.revenuDecouverte):"—"}</td>
+        </tr>))}</tbody>
+        <tfoot><tr style={tfSt}>
+          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
+          <td className="num" style={{color:"#8b5cf6",...tfTd}}>{agg.volsDec1pax||"—"}</td>
+          <td className="num" style={{color:"#8b5cf6",...tfTd}}>{agg.volsDec2pax||"—"}</td>
+          <td className="num" style={{color:"#8b5cf6",...tfTd}}>{agg.volsDec3pax||"—"}</td>
+          <td className="num" style={tfTd}>{fH(agg.hDec)}</td>
+          <td className="num" style={{color:"#8b5cf6",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuDecouverte)}</td>
+        </tr>
+        <tr style={{background:"var(--bg-2,#f8f9fb)"}}>
+          <td className="tx" style={{...tfTd,fontWeight:600,color:"var(--text3)"}}>Total vols</td>
+          <td colSpan="5" className="num" style={{...tfTd,fontWeight:800,fontSize:15}}>{agg.volsDecouverte} vol{agg.volsDecouverte>1?"s":""}</td>
         </tr></tfoot>
       </table></div>
-    </div>
+    </div>}
 
-    {/* ── Stats vols découverte ── */}
-    {(tot.d1 > 0 || tot.d2 > 0 || tot.d3 > 0) && <div className="card">
-      <div className="card-h"><h2>Statistiques vols découverte <span className="badge">{periodLabel}</span></h2></div>
+    {/* ── INITIATION ── */}
+    {sub === "initiation" && <div className="card">
+      <div className="card-h"><h2>Vols d&apos;initiation <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu = nb vols × tarif initiation (défini dans Tarifs & Coûts).</p>
+      <div className="tw"><table>
+        <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:"var(--orange)"}}>Revenu €</th></tr></thead>
+        <tbody>{rows.map(r => (<tr key={`i-${acId}-${r.i}`}>
+          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
+          <td><HMInput value={r.act.heuresInitiation} onChange={v=>saveHM(r.i,"heuresInitiation",v)} style={inpSm}/></td>
+          <td><input type="number" min="0" step="1" value={r.act.volsInitiation||""} placeholder="0" onChange={e=>save(r.i,"volsInitiation",e.target.value)} style={inpN}/></td>
+          <td className="num" style={{color:"var(--orange)",fontWeight:600}}>{r.c.revenuInitiation>0?fmt(r.c.revenuInitiation):"—"}</td>
+        </tr>))}</tbody>
+        <tfoot><tr style={tfSt}>
+          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
+          <td className="num" style={tfTd}>{fH(agg.hInit)}</td>
+          <td className="num" style={{color:"var(--orange)",...tfTd}}>{agg.volsInitiation||"—"}</td>
+          <td className="num" style={{color:"var(--orange)",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuInitiation)}</td>
+        </tr></tfoot>
+      </table></div>
+    </div>}
+
+    {/* ── BIA ── */}
+    {sub === "bia" && <div className="card">
+      <div className="card-h"><h2>Vols BIA <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu saisi directement (prix variable par vol).</p>
+      <div className="tw"><table>
+        <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:"var(--green)"}}>Revenu €</th></tr></thead>
+        <tbody>{rows.map(r => (<tr key={`b-${acId}-${r.i}`}>
+          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
+          <td><HMInput value={r.act.heuresBia} onChange={v=>saveHM(r.i,"heuresBia",v)} style={inpSm}/></td>
+          <td><input type="number" min="0" step="1" value={r.act.volsBia||""} placeholder="0" onChange={e=>save(r.i,"volsBia",e.target.value)} style={inpN}/></td>
+          <td><input type="number" min="0" step="1" value={r.act.revenuBia||""} placeholder="0 €" onChange={e=>save(r.i,"revenuBia",e.target.value)} style={inpE}/></td>
+        </tr>))}</tbody>
+        <tfoot><tr style={tfSt}>
+          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
+          <td className="num" style={tfTd}>{fH(agg.hBia)}</td>
+          <td className="num" style={{color:"var(--green)",...tfTd}}>{agg.volsBia||"—"}</td>
+          <td className="num" style={{color:"var(--green)",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuBia)}</td>
+        </tr></tfoot>
+      </table></div>
+    </div>}
+
+    {/* ── VOLTIGE DÉCOUVERTE ── */}
+    {sub === "voltige" && <div className="card">
+      <div className="card-h"><h2>Voltige découverte <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu = nb vols × tarif voltige découverte (défini dans Tarifs & Coûts).</p>
+      <div className="tw"><table>
+        <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:"var(--purple)"}}>Revenu €</th></tr></thead>
+        <tbody>{rows.map(r => (<tr key={`v-${acId}-${r.i}`}>
+          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
+          <td><HMInput value={r.act.heuresVoltigeDec} onChange={v=>saveHM(r.i,"heuresVoltigeDec",v)} style={inpSm}/></td>
+          <td><input type="number" min="0" step="1" value={r.act.volsVoltigeDec||""} placeholder="0" onChange={e=>save(r.i,"volsVoltigeDec",e.target.value)} style={inpN}/></td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:600}}>{r.c.revenuVoltigeDec>0?fmt(r.c.revenuVoltigeDec):"—"}</td>
+        </tr>))}</tbody>
+        <tfoot><tr style={tfSt}>
+          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
+          <td className="num" style={tfTd}>{fH(agg.hVoltigeDec)}</td>
+          <td className="num" style={{color:"var(--purple)",...tfTd}}>{agg.volsVoltigeDec||"—"}</td>
+          <td className="num" style={{color:"var(--purple)",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuVoltigeDec)}</td>
+        </tr></tfoot>
+      </table></div>
+    </div>}
+
+    {/* ── VINTAGE ── */}
+    {sub === "vintage" && <div className="card">
+      <div className="card-h"><h2>Vols vintage <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
+      <p style={{fontSize:12,color:"var(--text3)",padding:"12px 20px 0"}}>Revenu = nb vols × tarif vintage (défini dans Tarifs & Coûts).</p>
+      <div className="tw"><table>
+        <thead><tr><th>Mois</th><th>Heures</th><th>Nb vols</th><th style={{color:"var(--accent)"}}>Revenu €</th></tr></thead>
+        <tbody>{rows.map(r => (<tr key={`vt-${acId}-${r.i}`}>
+          <td className="tx" style={{fontWeight:600}}>{MOS[r.i]}</td>
+          <td><HMInput value={r.act.heuresVintage} onChange={v=>saveHM(r.i,"heuresVintage",v)} style={inpSm}/></td>
+          <td><input type="number" min="0" step="1" value={r.act.volsVintage||""} placeholder="0" onChange={e=>save(r.i,"volsVintage",e.target.value)} style={inpN}/></td>
+          <td className="num" style={{color:"var(--accent)",fontWeight:600}}>{r.c.revenuVintage>0?fmt(r.c.revenuVintage):"—"}</td>
+        </tr>))}</tbody>
+        <tfoot><tr style={tfSt}>
+          <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
+          <td className="num" style={tfTd}>{fH(agg.hVintage)}</td>
+          <td className="num" style={{color:"var(--accent)",...tfTd}}>{agg.volsVintage||"—"}</td>
+          <td className="num" style={{color:"var(--accent)",fontWeight:800,fontSize:15,...tfTd}}>{fmt(agg.revenuVintage)}</td>
+        </tr></tfoot>
+      </table></div>
+    </div>}
+
+    {/* ── RÉSUMÉ ── */}
+    {sub === "resume" && <div className="card">
+      <div className="card-h"><h2>Résumé des revenus <span className="badge">{acLabel} · {periodLabel}</span></h2></div>
       <div className="card-b">
-        <div className="sg">
-          <div className="sc"><div className="sc-l">1 passager</div><div className="sc-v b">{tot.d1} vol{tot.d1>1?"s":""}</div></div>
-          <div className="sc"><div className="sc-l">2 passagers</div><div className="sc-v b">{tot.d2} vol{tot.d2>1?"s":""}</div></div>
-          <div className="sc"><div className="sc-l">3 passagers</div><div className="sc-v b">{tot.d3} vol{tot.d3>1?"s":""}</div></div>
-          <div className="sc hl" style={{borderColor:"var(--accent)"}}><div className="sc-l">Total découverte</div><div className="sc-v b">{tot.volsDec} vol{tot.volsDec>1?"s":""}</div><div className="sc-s">{fmt(tot.revDec)}</div></div>
-        </div>
+        <div className="tw"><table>
+          <thead><tr><th>Type de vol</th><th>Heures</th><th>Nb vols</th><th>Revenu</th></tr></thead>
+          <tbody>
+            <tr><td className="tx" style={{fontWeight:600}}>Standard (CdB+DC)</td><td className="num">{fH(agg.heuresPilote)}</td><td className="num">—</td><td className="num" style={{color:"var(--accent)",fontWeight:700}}>{fmt(agg.revenuPilote)}</td></tr>
+            <tr><td className="tx" style={{fontWeight:600}}>Découverte</td><td className="num">{fH(agg.hDec)}</td><td className="num">{agg.volsDecouverte||"—"}</td><td className="num" style={{color:"#8b5cf6",fontWeight:700}}>{fmt(agg.revenuDecouverte)}</td></tr>
+            <tr><td className="tx" style={{fontWeight:600}}>Initiation</td><td className="num">{fH(agg.hInit)}</td><td className="num">{agg.volsInitiation||"—"}</td><td className="num" style={{color:"var(--orange)",fontWeight:700}}>{fmt(agg.revenuInitiation)}</td></tr>
+            <tr><td className="tx" style={{fontWeight:600}}>BIA</td><td className="num">{fH(agg.hBia)}</td><td className="num">{agg.volsBia||"—"}</td><td className="num" style={{color:"var(--green)",fontWeight:700}}>{fmt(agg.revenuBia)}</td></tr>
+            <tr><td className="tx" style={{fontWeight:600}}>Voltige découverte</td><td className="num">{fH(agg.hVoltigeDec)}</td><td className="num">{agg.volsVoltigeDec||"—"}</td><td className="num" style={{color:"var(--purple)",fontWeight:700}}>{fmt(agg.revenuVoltigeDec)}</td></tr>
+            <tr><td className="tx" style={{fontWeight:600}}>Vintage</td><td className="num">{fH(agg.hVintage)}</td><td className="num">{agg.volsVintage||"—"}</td><td className="num" style={{fontWeight:700}}>{fmt(agg.revenuVintage)}</td></tr>
+          </tbody>
+          <tfoot><tr style={tfSt}>
+            <td className="tx" style={{fontWeight:800,fontSize:13,...tfTd}}>TOTAL</td>
+            <td className="num" style={{...tfTd,fontWeight:800}}>{fH(agg.heures)}</td>
+            <td className="num" style={tfTd}></td>
+            <td className="num" style={{color:"var(--accent)",fontWeight:800,fontSize:16,...tfTd}}>{fmt(agg.revenu)}</td>
+          </tr></tfoot>
+        </table></div>
       </div>
     </div>}
   </div>);

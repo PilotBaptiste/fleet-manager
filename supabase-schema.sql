@@ -49,6 +49,10 @@ CREATE TABLE monthly (
   vols_initiation INT DEFAULT 0,       -- nb vols initiation
   vols_bia INT DEFAULT 0,              -- nb vols BIA
   revenu_bia NUMERIC DEFAULT 0,        -- revenu BIA saisi (coût variable par vol)
+  heures_voltige_dec NUMERIC DEFAULT 0,-- heures voltige découverte
+  vols_voltige_dec INT DEFAULT 0,      -- nb vols voltige découverte
+  heures_vintage NUMERIC DEFAULT 0,    -- heures vol vintage
+  vols_vintage INT DEFAULT 0,          -- nb vols vintage
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(ac_id, year, month)
 );
@@ -70,6 +74,10 @@ UPDATE monthly SET vols_dec_1pax = COALESCE(vols_decouverte, 0)
 ALTER TABLE monthly DROP COLUMN IF EXISTS vols_decouverte;
 ALTER TABLE monthly DROP COLUMN IF EXISTS revenu_decouverte;
 ALTER TABLE monthly DROP COLUMN IF EXISTS revenu_initiation;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_voltige_dec NUMERIC DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_voltige_dec INT DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS heures_vintage NUMERIC DEFAULT 0;
+ALTER TABLE monthly ADD COLUMN IF NOT EXISTS vols_vintage INT DEFAULT 0;
 
 -- Loans
 CREATE TABLE loans (
