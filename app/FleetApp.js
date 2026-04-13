@@ -1692,16 +1692,24 @@ function ImportCSV({ data, db }) {
       ? aggregateRowsForAc(agg.monthly)
       : agg.monthly;
 
-    // Import data to target
+    // Import data to target — ADD to existing values (don't replace)
     for (const row of rows) {
       const acId = importAcId !== "auto" ? importAcId : immatMap[row.immat];
       if (!acId) { skipped++; continue; }
       if (importTarget === "standard") {
-        await db.setMonthly(acId, row.year, row.month, { heures: row.heures, rotations: row.rotations, heuresDc: row.heuresDc });
+        const key = `${acId}|${row.year}|${row.month}`;
+        const ex = data.monthly[key] || {};
+        await db.setMonthly(acId, row.year, row.month, {
+          heures: (ex.heures || 0) + row.heures,
+          heuresDc: (ex.heuresDc || 0) + row.heuresDc,
+          rotations: (ex.rotations || 0) + row.rotations,
+        });
       } else {
+        const key = `${acId}|${importTarget}|${row.year}|${row.month}`;
+        const ex = data.flightActivity[key] || {};
         await db.setFlightActivity(acId, importTarget, row.year, row.month, {
-          heures: row.heures + row.heuresDc,
-          vols: row.rotations,
+          heures: (ex.heures || 0) + row.heures + row.heuresDc,
+          vols: (ex.vols || 0) + row.rotations,
         });
       }
       imported++;
