@@ -1795,6 +1795,24 @@ function ImportCSV({ data, db }) {
           </div>
         )}
 
+        {/* Type de vol breakdown */}
+        {agg.stats.byType && Object.keys(agg.stats.byType).length > 0 && (
+          <div className="card">
+            <div className="card-h"><h2>Répartition par type de vol</h2></div>
+            <div className="card-b">
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {Object.entries(agg.stats.byType).sort((a,b) => b[1].heures - a[1].heures).map(([type, s]) => (
+                  <div key={type} style={{background:"var(--bg)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 16px",minWidth:120,textAlign:"center"}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"var(--accent)",marginBottom:4}}>{type}</div>
+                    <div style={{fontSize:18,fontWeight:800}}>{fH(s.heures)}</div>
+                    <div style={{fontSize:11,color:"var(--text3)"}}>{s.count} vol{s.count > 1 ? "s" : ""}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Unknown aircraft */}
         {agg.unknownImmats.length > 0 && (
           <div className="card" style={{borderColor:"var(--orange)"}}>
