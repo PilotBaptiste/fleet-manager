@@ -556,7 +556,7 @@ function Activity({ data, db, year, range }) {
         <div className="tw"><table>
           <thead><tr><th>Type de vol</th><th>Heures</th><th>Nb vols</th><th>Revenu</th></tr></thead>
           <tbody>
-            <tr><td className="tx" style={{fontWeight:600}}>Standard (CdB+DC)</td><td className="num">{fH(agg.heuresPilote)}</td><td className="num">—</td><td className="num" style={{color:"var(--accent)",fontWeight:700}}>{fmt(agg.revenuPilote)}</td></tr>
+            <tr><td className="tx" style={{fontWeight:600}}>Standard (CdB+DC)</td><td className="num">{fH(agg.heuresPilote)}</td><td className="num">{agg.rotations||"—"}</td><td className="num" style={{color:"var(--accent)",fontWeight:700}}>{fmt(agg.revenuPilote)}</td></tr>
             {flightTypes.map(ft => {
               const fa = agg.ftRevenues[ft.id] || { heures:0, vols:0, vols2:0, vols3:0, revenu:0 };
               const totalVols = ft.mode === "pax3" ? fa.vols + fa.vols2 + fa.vols3 : fa.vols;
